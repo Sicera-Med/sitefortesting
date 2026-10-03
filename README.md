@@ -5,18 +5,28 @@ Backend для платформы тестирования AI-триажа ме�
 ## Запуск
 
 ```bash
+cd backend
 cp .env.example .env
-uv sync --extra dev           # или: pip install -e ".[dev]"
+uv sync                       # ставит и dev-зависимости (группа dev)
 uv run uvicorn app.main:app --reload
+```
+
+Или в Docker:
+
+```bash
+cd backend
+docker compose up --build
 ```
 
 - Swagger: http://localhost:8000/docs
 - Health:  http://localhost:8000/api/v1/health
 
-## Тесты
+## Тесты и линтер
 
 ```bash
+cd backend
 uv run pytest
+uv run ruff check . && uv run ruff format --check .
 ```
 
 ## Слои

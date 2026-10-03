@@ -95,3 +95,9 @@ desktop.ini
 npm-debug.log*
 yarn-error.log
 pnpm-debug.log*
+
+# ===== Claude Code / локальная документация =====
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+docs/
