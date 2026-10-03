@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     AI_PROVIDER: Literal["mock", "http"] = "mock"
     AI_BASE_URL: str = "http://localhost:8001"
     AI_TIMEOUT_S: int = Field(default=30, gt=0)
+    AI_HIGH_CONFIDENCE: float = Field(default=0.7, ge=0, le=1)
+
+    # --- Клиника ---
+    CLINIC_TZ: str = "Europe/Moscow"  # слоты записи считаются в этом поясе
 
     # --- Storage ---
     STORAGE: Literal["memory", "sql"] = "memory"

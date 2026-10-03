@@ -12,6 +12,7 @@ dependencies = [
     "bcrypt>=4.2.0",
     "httpx>=0.28.1",
     "python-ulid>=4.0.1",
+    "tzdata>=2026.5",
 ]
 
 # uv ставит группу dev по умолчанию при `uv sync`

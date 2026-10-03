@@ -51,6 +51,10 @@ class ConflictError(DomainError):
     code = "conflict"
 
 
+class InvalidTransitionError(ConflictError):
+    code = "invalid_transition"
+
+
 class InvalidInputError(DomainError):
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
     code = "validation_error"

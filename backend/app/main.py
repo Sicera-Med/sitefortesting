@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,6 +12,10 @@ from app.core.config import Settings, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import setup_logging
 from app.core.request_id import REQUEST_ID_HEADER, RequestIdMiddleware
+from app.seed import DEMO_PASSWORD, seed_demo
+from app.store import Store
+
+logger = logging.getLogger(__name__)
 
 
 def _build_cors_kwargs(settings: Settings) -> dict:
@@ -36,6 +41,19 @@ def _build_cors_kwargs(settings: Settings) -> dict:
     }
 
 
+def build_store(settings: Settings) -> Store:
+    store = Store()
+    if settings.SEED_ON_START:
+        seed_demo(store, tz=settings.CLINIC_TZ)
+        logger.info(
+            "Demo data seeded: users=%d studies=%d; password for all demo accounts: %s",
+            len(store.users),
+            len(store.studies),
+            DEMO_PASSWORD,
+        )
+    return store
+
+
 def _docs_urls(settings: Settings) -> dict:
     """В проде выключаем docs/openapi; в dev — включаем."""
     enabled = settings.ENABLE_DOCS
@@ -48,21 +66,10 @@ def _docs_urls(settings: Settings) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Заглушки, чтобы код, обращающийся к app.state.*, падал предсказуемо,
-    # а не с AttributeError. Замените на реальную инициализацию:
-    # app.state.store = build_store(settings)
-    # app.state.ai = build_ai_provider(settings)
-    app.state.store = None
-    app.state.ai = None
-
-    try:
-        yield
-    finally:
-        # shutdown-хуки: закрытие store, http-клиентов и т.п.
-        # store = app.state.store
-        # if store is not None:
-        #     await store.close()
-        pass
+    settings = get_settings()
+    app.state.store = build_store(settings)
+    # app.state.ai = build_ai_provider(settings)  — этап AI
+    yield
 
 
 def create_app() -> FastAPI:
