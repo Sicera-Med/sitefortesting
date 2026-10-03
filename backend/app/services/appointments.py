@@ -142,14 +142,23 @@ class AppointmentService:
                 notification.status = NotificationStatus.READ
             complete_study(self.store, notification.study_id)
             audit.record(
-                self.store, user, "patient.booked", target_id=notification.study_id,
-                appointment_id=appointment.id, doctor_id=doctor.id,
+                self.store,
+                user,
+                "patient.booked",
+                target_id=notification.study_id,
+                appointment_id=appointment.id,
+                doctor_id=doctor.id,
                 scheduled_for=moment.isoformat(),
             )
         else:
             audit.record(
-                self.store, user, "appointment.created", target_type="appointment",
-                target_id=appointment.id, doctor_id=doctor.id, scheduled_for=moment.isoformat(),
+                self.store,
+                user,
+                "appointment.created",
+                target_type="appointment",
+                target_id=appointment.id,
+                doctor_id=doctor.id,
+                scheduled_for=moment.isoformat(),
             )
         return self._view(appointment)
 
@@ -167,7 +176,10 @@ class AppointmentService:
             raise ConflictError("Запись уже отменена")
         appointment.status = AppointmentStatus.CANCELLED
         audit.record(
-            self.store, user, "appointment.cancelled", target_type="appointment",
+            self.store,
+            user,
+            "appointment.cancelled",
+            target_type="appointment",
             target_id=appointment.id,
         )
         return self._view(appointment)

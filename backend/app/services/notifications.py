@@ -68,8 +68,12 @@ class NotificationService:
         )
         study.status = StudyStatus.NOTIFIED
         audit.record(
-            self.store, user, "notification.sent", target_id=study.id,
-            notification_id=notification.id, channel=str(channel),
+            self.store,
+            user,
+            "notification.sent",
+            target_id=study.id,
+            notification_id=notification.id,
+            channel=str(channel),
         )
         return notification
 
@@ -114,7 +118,10 @@ class NotificationService:
             notification.read_at = utcnow()
             notification.status = NotificationStatus.READ
             audit.record(
-                self.store, user, "notification.read", target_id=notification.study_id,
+                self.store,
+                user,
+                "notification.read",
+                target_id=notification.study_id,
                 notification_id=notification.id,
             )
         return self._view(notification)
@@ -131,7 +138,10 @@ class NotificationService:
             notification.status = NotificationStatus.READ
         complete_study(self.store, notification.study_id)
         audit.record(
-            self.store, user, "patient.declined", target_id=notification.study_id,
+            self.store,
+            user,
+            "patient.declined",
+            target_id=notification.study_id,
             notification_id=notification.id,
         )
         return self._view(notification)

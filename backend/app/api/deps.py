@@ -10,7 +10,10 @@ from app.core.errors import ForbiddenError, UnauthorizedError
 from app.domain.enums import Role
 from app.domain.models import User
 from app.services.ai_service import AIService
+from app.services.appointments import AppointmentService
 from app.services.auth import AuthService
+from app.services.metrics import MetricsService
+from app.services.notifications import NotificationService
 from app.services.studies import StudyService
 from app.store import Store
 
@@ -45,9 +48,24 @@ def get_study_service(store: StoreDep, ai: AIService = Depends(get_ai_service)) 
     return StudyService(store, ai)
 
 
+def get_notification_service(store: StoreDep) -> NotificationService:
+    return NotificationService(store)
+
+
+def get_appointment_service(store: StoreDep, settings: SettingsDep) -> AppointmentService:
+    return AppointmentService(store, tz=settings.CLINIC_TZ)
+
+
+def get_metrics_service(store: StoreDep, settings: SettingsDep) -> MetricsService:
+    return MetricsService(store, high_confidence=settings.AI_HIGH_CONFIDENCE)
+
+
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 AIServiceDep = Annotated[AIService, Depends(get_ai_service)]
 StudyServiceDep = Annotated[StudyService, Depends(get_study_service)]
+NotificationServiceDep = Annotated[NotificationService, Depends(get_notification_service)]
+AppointmentServiceDep = Annotated[AppointmentService, Depends(get_appointment_service)]
+MetricsServiceDep = Annotated[MetricsService, Depends(get_metrics_service)]
 
 # --- Текущий пользователь и роли ---
 
