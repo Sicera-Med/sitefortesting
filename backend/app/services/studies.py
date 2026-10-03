@@ -15,7 +15,7 @@ from app.core.errors import (
 )
 from app.core.ids import new_id
 from app.domain import rules
-from app.domain.decisions import normalize_details
+from app.domain.decisions import normalize_chosen, normalize_details
 from app.domain.enums import AISource, RecommendationType, Role, StudyStatus
 from app.domain.models import (
     AIInference,
@@ -29,6 +29,7 @@ from app.domain.models import (
 )
 from app.services import audit
 from app.services.ai_service import AIService
+from app.services.notifications import NotificationService
 from app.store import Store
 
 Scope = Literal["mine", "all"]
@@ -44,8 +45,7 @@ class StudyView:
     inference: AIInference | None
     decision: Decision | None
     notification: Notification | None
-    appointment: Appointment | None
-    appointment_doctor: User | None
+    appointments: list[tuple[Appointment, User]]  # записи пациента по уведомлению
     can_act: bool
 
 
@@ -67,10 +67,13 @@ class StudyService:
     def _view(self, user: User, study: Study) -> StudyView:
         decision = self.store.decision_for_study(study.id)
         notification = self.store.notification_for_decision(decision.id) if decision else None
-        appointment = (
-            self.store.get_appointment(notification.appointment_id)
-            if notification and notification.appointment_id
-            else None
+        appointments = (
+            [
+                (a, self.store.get_user(a.doctor_id))
+                for a in self.store.list_appointments(notification_id=notification.id)
+            ]
+            if notification
+            else []
         )
         return StudyView(
             study=study,
@@ -79,8 +82,7 @@ class StudyService:
             inference=self.store.latest_inference(study.id),
             decision=decision,
             notification=notification,
-            appointment=appointment,
-            appointment_doctor=self.store.get_user(appointment.doctor_id) if appointment else None,
+            appointments=appointments,
             can_act=rules.can_act(user, study),
         )
 
@@ -108,18 +110,16 @@ class StudyService:
         return [(e, self.store.get_user(e.actor_id) if e.actor_id else None) for e in events]
 
     # --- AI ---
-
-    def _check_can_analyze(self, user: User, study: Study) -> None:
-        if not rules.can_analyze(user, study):
-            raise ForbiddenError("Анализ запускает лечащий врач или заведующий")
-        if study.status not in rules.ANALYZABLE_STATUSES:
-            raise InvalidTransitionError(
-                "После решения врача анализ не перезапускается",
-                details={"status": str(study.status)},
-            )
+    # Анализ запускается автоматически (services/auto_analyze.py), врач его не вызывает.
 
     def _save_inference(
-        self, user: User, study: Study, result: AIResult, *, source: AISource, latency_ms: int
+        self,
+        actor: User | None,
+        study: Study,
+        result: AIResult,
+        *,
+        source: AISource,
+        latency_ms: int,
     ) -> AIInference:
         is_repeat = self.store.latest_inference(study.id) is not None
         inference = self.store.add_inference(
@@ -136,12 +136,15 @@ class StudyService:
                 reasons=result.reasons,
                 latency_ms=latency_ms,
                 created_at=utcnow(),
+                details=dict(result.details),
             )
         )
-        study.status = StudyStatus.AI_READY
+        # Пока шёл запрос, врач мог уже решить без AI — статус тогда не трогаем
+        if study.status in rules.ANALYZABLE_STATUSES:
+            study.status = StudyStatus.AI_READY
         audit.record(
             self.store,
-            user,
+            actor,
             "ai.reanalyzed" if is_repeat else "ai.analyzed",
             target_id=study.id,
             inference_id=inference.id,
@@ -153,20 +156,25 @@ class StudyService:
         )
         return inference
 
-    async def analyze(self, user: User, study_id: str) -> AIInference:
-        study = self._get(user, study_id)
-        self._check_can_analyze(user, study)
+    async def analyze_auto(self, study_id: str) -> AIInference:
+        """Анализ от имени системы. Бросает AIFailedError, если AI не ответил."""
+        study = self.store.get_study(study_id)
+        if study is None:
+            raise NotFoundError("Исследование не найдено", details={"study_id": study_id})
         patient = self.store.get_patient(study.patient_id)
         request: AIRequest = self.ai.request_for_study(study, patient)
         try:
             result, latency_ms = await self.ai.run(request)
         except AIFailedError as exc:
-            # Был успешный результат раньше — остаёмся в ai_ready, иначе ai_failed
-            if self.store.latest_inference(study.id) is None:
+            # В аудит — только начало серии сбоев; повторы раз в AI_RETRY_S не засоряют таймлайн
+            first_failure = study.status is not StudyStatus.AI_FAILED
+            if study.status is StudyStatus.NEW:
                 study.status = StudyStatus.AI_FAILED
+            if not first_failure:
+                raise
             audit.record(
                 self.store,
-                user,
+                None,
                 "ai.failed",
                 target_id=study.id,
                 request_id=request.request_id,
@@ -175,12 +183,19 @@ class StudyService:
             )
             raise
         return self._save_inference(
-            user, study, result, source=self.ai.provider.source, latency_ms=latency_ms
+            None, study, result, source=self.ai.provider.source, latency_ms=latency_ms
         )
 
     def upload_ai_result(self, user: User, study_id: str, data: Any) -> AIInference:
+        """Запасной путь (§6.5): ответ AI в формате контракта, загруженный вручную."""
         study = self._get(user, study_id)
-        self._check_can_analyze(user, study)
+        if not rules.can_analyze(user, study):
+            raise ForbiddenError("Загрузить ответ AI может лечащий врач или заведующий")
+        if study.status not in rules.ANALYZABLE_STATUSES:
+            raise InvalidTransitionError(
+                "После решения врача результат AI не меняется",
+                details={"status": str(study.status)},
+            )
         result = self.ai.parse_manual(data)
         return self._save_inference(user, study, result, source=AISource.MANUAL, latency_ms=0)
 
@@ -191,7 +206,7 @@ class StudyService:
         user: User,
         study_id: str,
         *,
-        chosen_type: RecommendationType,
+        chosen_types: list[RecommendationType],
         details: dict[str, Any],
         comment: str | None,
     ) -> Decision:
@@ -202,14 +217,15 @@ class StudyService:
             raise ConflictError("Решение по исследованию уже принято")
         if not rules.can_transition(study.status, StudyStatus.DECIDED):
             raise InvalidTransitionError(
-                "Сначала нужен результат AI (или его ошибка)",
-                details={"status": str(study.status)},
+                "Решение по исследованию уже принято", details={"status": str(study.status)}
             )
         try:
-            clean_details = normalize_details(chosen_type, details)
+            chosen = normalize_chosen(chosen_types)
+            clean_details = normalize_details(chosen, details)
         except ValueError as exc:
             raise InvalidInputError(str(exc), details={"field": "details"}) from exc
 
+        # Решение без AI тоже допустимо: тогда снапшот AI пустой
         inference = self.store.latest_inference(study.id)
         ai_rec = inference.recommendation if inference else None
         decision = self.store.add_decision(
@@ -217,14 +233,18 @@ class StudyService:
                 id=new_id("dc"),
                 study_id=study.id,
                 doctor_id=user.id,
-                chosen_type=chosen_type,
+                chosen_types=chosen,
                 details=clean_details,
                 comment=(comment or "").strip() or None,
                 ai_inference_id=inference.id if inference else None,
                 ai_recommendation=ai_rec,
                 ai_confidence=inference.confidence if inference else None,
-                accepted_ai=rules.compute_accepted_ai(chosen_type, ai_rec),
+                accepted_ai=rules.compute_accepted_ai(chosen, ai_rec),
                 created_at=utcnow(),
+                ai_details=dict(inference.details) if inference else None,
+                details_match=rules.compute_details_match(
+                    chosen, clean_details, ai_rec, inference.details if inference else None
+                ),
             )
         )
         study.status = StudyStatus.DECIDED
@@ -234,7 +254,9 @@ class StudyService:
             "decision.created",
             target_id=study.id,
             decision_id=decision.id,
-            chosen_type=str(chosen_type),
+            chosen_types=[str(t) for t in chosen],
             accepted_ai=decision.accepted_ai,
         )
+        # Пациент узнаёт о решении сразу — во все доступные каналы
+        NotificationService(self.store).notify(user, decision)
         return decision

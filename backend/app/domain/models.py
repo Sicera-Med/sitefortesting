@@ -43,6 +43,7 @@ class Patient:
     birth_date: date
     sex: Sex
     phone: str
+    social: str | None = None  # аккаунт в соцсети/мессенджере, если пациент его указал
 
     def age_on(self, day: date) -> int:
         before_birthday = (day.month, day.day) < (self.birth_date.month, self.birth_date.day)
@@ -89,6 +90,8 @@ class AIInference:
     reasons: tuple[Reason, ...]
     latency_ms: int
     created_at: datetime
+    # Предложенные AI детали: {"specialist": ...} или {"research_types": [...]}; {} — нет
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -96,7 +99,8 @@ class Decision:
     id: str
     study_id: str
     doctor_id: str
-    chosen_type: RecommendationType
+    # Врач выбирает от одного до всех трёх вариантов
+    chosen_types: tuple[RecommendationType, ...]
     details: dict[str, Any]
     comment: str | None
     # Снапшот AI на момент решения (None — решение принято без AI)
@@ -105,6 +109,9 @@ class Decision:
     ai_confidence: float | None
     accepted_ai: bool | None
     created_at: datetime
+    ai_details: dict[str, Any] | None = None
+    # Совпали ли детали с AI (только когда тип совпал и AI предлагал детали)
+    details_match: bool | None = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -113,7 +120,8 @@ class Notification:
     decision_id: str
     study_id: str
     patient_id: str
-    channel: NotificationChannel
+    # Каналы, в которые ушло уведомление (все доступные контакты); в кабинете — всегда
+    channels: tuple[NotificationChannel, ...]
     text: str
     status: NotificationStatus
     sent_at: datetime

@@ -103,8 +103,28 @@ class AppointmentService:
         notification = None
         if notification_id:
             notification = NotificationService(self.store).own_notification(user, notification_id)
-            if not rules.can_respond_to_notification(notification):
-                raise ConflictError("Вы уже ответили на это уведомление")
+            if notification.patient_action is PatientActionType.DECLINED:
+                raise ConflictError("Вы отказались от этой рекомендации")
+            # По одному уведомлению можно записаться к нескольким врачам — но не дважды к одному
+            already = self.store.list_appointments(
+                notification_id=notification.id,
+                doctor_id=doctor.id,
+                status=AppointmentStatus.SCHEDULED,
+            )
+            if already:
+                raise ConflictError("Вы уже записаны к этому врачу по этой рекомендации")
+            decision = self.store.get_decision(notification.decision_id)
+            study = self.store.get_study(notification.study_id)
+            if (
+                decision
+                and study
+                and rules.only_treating_doctor(decision)
+                and doctor.id != study.treating_doctor_id
+            ):
+                raise InvalidInputError(
+                    "Повторный приём — только у лечащего врача",
+                    details={"doctor_id": study.treating_doctor_id},
+                )
 
         if not schedule.is_bookable(moment, now, self.tz):
             raise InvalidInputError(
@@ -134,9 +154,11 @@ class AppointmentService:
             )
         )
         if notification:
+            first = notification.patient_action is None
             notification.patient_action = PatientActionType.BOOKED
-            notification.action_at = now
-            notification.appointment_id = appointment.id
+            if first:
+                notification.action_at = now
+            notification.appointment_id = appointment.id  # последняя запись
             if notification.read_at is None:
                 notification.read_at = now
                 notification.status = NotificationStatus.READ

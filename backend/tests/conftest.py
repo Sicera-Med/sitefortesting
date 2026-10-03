@@ -12,6 +12,9 @@ def _test_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     # Переменные окружения имеют приоритет над .env — тесты не зависят от локального .env
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("CORS_ORIGINS", '["http://localhost:3000"]')
+    # Детерминированные ответы AI (фикстуры) — только в тестах; воркер запускаем вручную
+    monkeypatch.setenv("AI_PROVIDER", "mock")
+    monkeypatch.setenv("AI_AUTO_ANALYZE", "false")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -21,6 +24,11 @@ def _test_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 def client() -> Iterator[TestClient]:
     with TestClient(create_app()) as c:  # with — чтобы отработал lifespan
         yield c
+
+
+def analyze_all(client: TestClient) -> int:
+    """Прогон автоанализа (в приложении его делает фоновый воркер)."""
+    return client.portal.call(client.app.state.analyzer.run_once)
 
 
 def login(client: TestClient, email: str, password: str = "demo") -> dict[str, str]:

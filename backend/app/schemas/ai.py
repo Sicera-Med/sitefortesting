@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.ai.contract import AIResult, PatientContext
@@ -22,6 +24,7 @@ class AIResultOut(BaseModel):
     confidence: float
     ranked_options: list[RankedOptionOut]
     reasons: list[ReasonOut]
+    details: dict[str, Any]
     warnings: list[str]
 
     @classmethod
@@ -34,6 +37,7 @@ class AIResultOut(BaseModel):
             confidence=r.confidence,
             ranked_options=[RankedOptionOut(type=o.type, score=o.score) for o in r.ranked_options],
             reasons=[ReasonOut(code=x.code, label=x.label, weight=x.weight) for x in r.reasons],
+            details=dict(r.details),
             warnings=list(r.warnings),
         )
 

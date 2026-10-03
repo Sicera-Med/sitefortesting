@@ -40,10 +40,15 @@ class Settings(BaseSettings):
     JWT_TTL_MIN: int = Field(default=60, gt=0)
 
     # --- AI ---
-    AI_PROVIDER: Literal["mock", "http"] = "mock"
+    # Ответы AI — только от сервиса коллег. mock (фикстуры) разрешён лишь в тестах
+    AI_PROVIDER: Literal["mock", "http"] = "http"
     AI_BASE_URL: str = "http://localhost:8001"
     AI_TIMEOUT_S: int = Field(default=30, gt=0)
-    AI_MOCK_LATENCY_MS: int = Field(default=0, ge=0)  # имитация «думающей» модели на демо
+    AI_MOCK_LATENCY_MS: int = Field(default=0, ge=0)  # только для тестов
+    # Автоанализ: новые исследования уходят в AI сами; при сбое — повтор через AI_RETRY_S
+    AI_AUTO_ANALYZE: bool = True
+    AI_POLL_S: float = Field(default=3, gt=0)
+    AI_RETRY_S: float = Field(default=30, gt=0)
     AI_HIGH_CONFIDENCE: float = Field(default=0.7, ge=0, le=1)
 
     # --- Клиника ---
@@ -61,6 +66,11 @@ class Settings(BaseSettings):
             self.ENABLE_DOCS = self.APP_ENV != "prod"
         if self.APP_ENV == "prod" and self.JWT_SECRET == _DEFAULT_JWT_SECRET:
             raise ValueError("JWT_SECRET must be set explicitly in prod")
+        if self.AI_PROVIDER == "mock" and self.APP_ENV != "test":
+            raise ValueError(
+                "AI_PROVIDER=mock — только для тестов: ответы AI не подделываем. "
+                "Укажите AI_PROVIDER=http и AI_BASE_URL сервиса"
+            )
         return self
 
 

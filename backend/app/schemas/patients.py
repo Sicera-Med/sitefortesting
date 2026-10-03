@@ -7,7 +7,6 @@ from pydantic import AwareDatetime, BaseModel
 
 from app.domain.enums import (
     AppointmentStatus,
-    NotificationChannel,
     RecommendationType,
     StudyType,
 )
@@ -19,10 +18,6 @@ from app.services.notifications import PatientNotificationView
 # --- Уведомления ---
 
 
-class NotifyIn(BaseModel):
-    channel: NotificationChannel | None = None  # по умолчанию sms
-
-
 class NotificationStudyBrief(BaseModel):
     """Что пациент видит об исследовании: без текста заключения."""
 
@@ -32,21 +27,30 @@ class NotificationStudyBrief(BaseModel):
     performed_at: datetime
 
 
+class NotificationAppointmentOut(BaseModel):
+    id: str
+    doctor: DoctorBrief
+    scheduled_for: datetime
+    status: AppointmentStatus
+
+
 class PatientNotificationOut(BaseModel):
     notification: NotificationOut
-    recommendation: RecommendationType
+    recommendations: list[RecommendationType]
     details: dict[str, Any]
     comment: str | None
     study: NotificationStudyBrief
     treating_doctor: DoctorBrief
-    suggested_specialty: str | None
+    suggested_specialties: list[str]
     suggested_doctors: list[DoctorBrief]
+    only_treating_doctor: bool
+    appointments: list[NotificationAppointmentOut]
 
     @classmethod
     def build(cls, v: PatientNotificationView) -> PatientNotificationOut:
         return cls(
             notification=NotificationOut.build(v.notification),
-            recommendation=v.decision.chosen_type,
+            recommendations=list(v.decision.chosen_types),
             details=v.decision.details,
             comment=v.decision.comment,
             study=NotificationStudyBrief(
@@ -56,8 +60,18 @@ class PatientNotificationOut(BaseModel):
                 performed_at=v.study.performed_at,
             ),
             treating_doctor=DoctorBrief.build(v.treating_doctor),
-            suggested_specialty=v.suggested_specialty,
+            suggested_specialties=v.suggested_specialties,
             suggested_doctors=[DoctorBrief.build(d) for d in v.suggested_doctors],
+            only_treating_doctor=v.only_treating_doctor,
+            appointments=[
+                NotificationAppointmentOut(
+                    id=a.id,
+                    doctor=DoctorBrief.build(doctor),
+                    scheduled_for=a.scheduled_for,
+                    status=a.status,
+                )
+                for a, doctor in v.appointments
+            ],
         )
 
 

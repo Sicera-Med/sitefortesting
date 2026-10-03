@@ -121,7 +121,18 @@ def test_prod_requires_explicit_jwt_secret(monkeypatch):
 def test_docs_disabled_in_prod(monkeypatch):
     monkeypatch.setenv("APP_ENV", "prod")
     monkeypatch.setenv("JWT_SECRET", "x" * 32)
+    monkeypatch.setenv("AI_PROVIDER", "http")
     assert Settings(_env_file=None).ENABLE_DOCS is False
+
+
+def test_mock_ai_only_in_tests(monkeypatch):
+    import pytest
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("AI_PROVIDER", "mock")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
 
 
 def test_cors_wildcard_with_credentials_rejected(monkeypatch):

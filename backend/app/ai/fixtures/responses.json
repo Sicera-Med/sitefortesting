@@ -48,7 +48,13 @@
           "label": "Втяжение плевры",
           "weight": 0.12
         }
-      ]
+      ],
+      "details": {
+        "research_types": [
+          "pet_ct",
+          "biopsy"
+        ]
+      }
     }
   },
   {
@@ -138,7 +144,12 @@
           "label": "Категория риска по Fleischner",
           "weight": 0.3
         }
-      ]
+      ],
+      "details": {
+        "research_types": [
+          "ct"
+        ]
+      }
     }
   },
   {
@@ -228,7 +239,10 @@
           "label": "Утолщение стенок бронхов",
           "weight": 0.27
         }
-      ]
+      ],
+      "details": {
+        "specialist": "pulmonologist"
+      }
     }
   },
   {
@@ -313,7 +327,13 @@
           "label": "КТ уточнит распространённость",
           "weight": 0.1
         }
-      ]
+      ],
+      "details": {
+        "research_types": [
+          "ct",
+          "lab_tests"
+        ]
+      }
     }
   },
   {
@@ -358,7 +378,10 @@
           "label": "Краевые остеофиты",
           "weight": 0.13
         }
-      ]
+      ],
+      "details": {
+        "specialist": "orthopedist"
+      }
     }
   },
   {
@@ -403,7 +426,12 @@
           "label": "МРТ для исключения грыжи",
           "weight": 0.26
         }
-      ]
+      ],
+      "details": {
+        "research_types": [
+          "mri"
+        ]
+      }
     }
   },
   {
@@ -448,7 +476,10 @@
           "label": "Синовит",
           "weight": 0.16
         }
-      ]
+      ],
+      "details": {
+        "specialist": "orthopedist"
+      }
     }
   },
   {
@@ -538,7 +569,10 @@
           "label": "Компрессия корешка",
           "weight": 0.33
         }
-      ]
+      ],
+      "details": {
+        "specialist": "neurosurgeon"
+      }
     }
   },
   {
@@ -588,7 +622,13 @@
           "label": "Форма «выше, чем шире»",
           "weight": 0.12
         }
-      ]
+      ],
+      "details": {
+        "research_types": [
+          "biopsy",
+          "lab_tests"
+        ]
+      }
     }
   },
   {
@@ -633,7 +673,10 @@
           "label": "Признаки жирового гепатоза",
           "weight": 0.29
         }
-      ]
+      ],
+      "details": {
+        "specialist": "gastroenterologist"
+      }
     }
   },
   {
@@ -677,7 +720,10 @@
           "label": "Без нарушения уродинамики",
           "weight": 0.15
         }
-      ]
+      ],
+      "details": {
+        "specialist": "urologist"
+      }
     }
   },
   {

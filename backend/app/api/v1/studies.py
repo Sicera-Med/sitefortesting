@@ -36,16 +36,6 @@ async def get_study(study_id: str, user: StaffUser, service: StudyServiceDep) ->
 
 
 @router.post(
-    "/{study_id}/analyze",
-    response_model=InferenceOut,
-    summary="Запустить (или перезапустить) AI-анализ",
-    responses={502: {"description": "AI-сервис упал или ответил не по контракту"}},
-)
-async def analyze(study_id: str, user: StaffUser, service: StudyServiceDep) -> InferenceOut:
-    return InferenceOut.build(await service.analyze(user, study_id))
-
-
-@router.post(
     "/{study_id}/ai-result",
     response_model=InferenceOut,
     summary="Загрузить ответ AI вручную (JSON по контракту §6.2)",
@@ -64,7 +54,7 @@ async def decide(
     study_id: str, body: DecisionIn, user: DoctorUser, service: StudyServiceDep
 ) -> DecisionOut:
     decision = service.decide(
-        user, study_id, chosen_type=body.chosen_type, details=body.details, comment=body.comment
+        user, study_id, chosen_types=body.chosen_types, details=body.details, comment=body.comment
     )
     return DecisionOut.build(decision)
 

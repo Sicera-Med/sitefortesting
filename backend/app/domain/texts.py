@@ -8,15 +8,14 @@ from app.domain.enums import RecommendationType
 _GREETING = "Здравствуйте! По результатам вашего исследования врач рекомендует"
 
 
-def notification_text(chosen_type: RecommendationType, details: dict[str, Any]) -> str:
-    match chosen_type:
-        case RecommendationType.REPEAT_APPOINTMENT:
-            days = details.get("interval_days")
-            when = f" через {days} дн." if days else ""
-            return f"{_GREETING} повторный приём{when} Запишитесь, пожалуйста, на удобное время."
-        case RecommendationType.SPECIALIST_CONSULT:
-            who = SPECIALISTS.get(details.get("specialist", ""), "специалиста")
-            return f"{_GREETING} консультацию: {who}. Запишитесь, пожалуйста, на приём."
-        case RecommendationType.ADDITIONAL_RESEARCH:
-            what = RESEARCH_TYPES.get(details.get("research_type", ""), "дополнительное")
-            return f"{_GREETING} дополнительное исследование: {what}. Запишитесь, пожалуйста."
+def notification_text(chosen: tuple[RecommendationType, ...], details: dict[str, Any]) -> str:
+    parts: list[str] = []
+    if RecommendationType.REPEAT_APPOINTMENT in chosen:
+        parts.append("повторный приём")
+    if RecommendationType.SPECIALIST_CONSULT in chosen:
+        who = ", ".join(SPECIALISTS.get(s, s) for s in details.get("specialists", []))
+        parts.append(f"консультацию: {who or 'специалиста'}")
+    if RecommendationType.ADDITIONAL_RESEARCH in chosen:
+        what = ", ".join(RESEARCH_TYPES.get(r, r) for r in details.get("research_types", []))
+        parts.append(f"обследование: {what or 'по назначению врача'}")
+    return f"{_GREETING} {'; '.join(parts)}. Запишитесь, пожалуйста, на удобное время."

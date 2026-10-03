@@ -162,6 +162,7 @@ class Store:
         patient_id: str | None = None,
         doctor_id: str | None = None,
         status: AppointmentStatus | None = None,
+        notification_id: str | None = None,
     ) -> list[Appointment]:
         result = [
             a
@@ -169,6 +170,7 @@ class Store:
             if (patient_id is None or a.patient_id == patient_id)
             and (doctor_id is None or a.doctor_id == doctor_id)
             and (status is None or a.status is status)
+            and (notification_id is None or a.notification_id == notification_id)
         ]
         return sorted(result, key=lambda a: a.scheduled_for)
 

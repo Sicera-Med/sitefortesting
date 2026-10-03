@@ -4,7 +4,7 @@
 
 Валидация двухуровневая (§6.3):
 - строго — recommendation, confidence, reasons; нарушение → AIContractError;
-- мягко — ranked_options, request_id, model: чиним сами и пишем warning.
+- мягко — ranked_options, request_id, model, details: чиним сами и пишем warning.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.domain.decisions import normalize_ai_details
 from app.domain.enums import RecommendationType, Sex, StudyType
 from app.domain.models import RankedOption, Reason
 
@@ -62,6 +63,7 @@ class _RawResponse(BaseModel):
     confidence: float = Field(ge=0, le=1)
     ranked_options: list[_Option] = Field(default_factory=list)
     reasons: list[_Reason] = Field(min_length=1)
+    details: Any = None  # необязательно: {"specialist"} или {"research_types": [...]}
 
 
 class AIContractError(ValueError):
@@ -78,6 +80,7 @@ class AIResult:
     ranked_options: tuple[RankedOption, ...]
     reasons: tuple[Reason, ...]
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    details: dict[str, Any] = field(default_factory=dict)
 
     def to_contract_json(self) -> dict[str, Any]:
         """Обратно в формат §6.2 — для /ai/test и отладки."""
@@ -92,6 +95,7 @@ class AIResult:
             "reasons": [
                 {"code": r.code, "label": r.label, "weight": r.weight} for r in self.reasons
             ],
+            "details": self.details,
         }
 
 
@@ -160,6 +164,7 @@ def parse_ai_response(data: Any, *, expected_request_id: str) -> AIResult:
     reasons = tuple(
         Reason(r.code or f"reason_{i + 1}", r.label, r.weight) for i, r in enumerate(raw.reasons)
     )
+    details = normalize_ai_details(raw.recommendation, raw.details, warnings)
     return AIResult(
         request_id=expected_request_id,
         model_name=model.name,
@@ -171,4 +176,5 @@ def parse_ai_response(data: Any, *, expected_request_id: str) -> AIResult:
         ),
         reasons=reasons,
         warnings=tuple(warnings),
+        details=details,
     )

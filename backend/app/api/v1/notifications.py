@@ -1,25 +1,9 @@
 from fastapi import APIRouter
 
-from app.api.deps import DoctorUser, NotificationServiceDep, PatientUser
-from app.schemas.patients import NotifyIn, PatientNotificationOut
-from app.schemas.studies import NotificationOut
+from app.api.deps import NotificationServiceDep, PatientUser
+from app.schemas.patients import PatientNotificationOut
 
 router = APIRouter(tags=["notifications"])
-
-
-@router.post(
-    "/decisions/{decision_id}/notify",
-    response_model=NotificationOut,
-    summary="Отправить пациенту уведомление (мок)",
-)
-async def notify(
-    decision_id: str,
-    user: DoctorUser,
-    service: NotificationServiceDep,
-    body: NotifyIn | None = None,
-) -> NotificationOut:
-    channel = body.channel if body else None
-    return NotificationOut.build(service.notify(user, decision_id, channel))
 
 
 @router.get(

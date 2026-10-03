@@ -7,8 +7,8 @@ from app.core.clock import utcnow
 from app.core.errors import ConflictError, ForbiddenError, InvalidTransitionError, NotFoundError
 from app.core.ids import new_id
 from app.domain import rules
-from app.domain.enums import NotificationChannel, NotificationStatus, PatientActionType, StudyStatus
-from app.domain.models import Decision, Notification, Patient, Study, User
+from app.domain.enums import NotificationStatus, PatientActionType, StudyStatus
+from app.domain.models import Appointment, Decision, Notification, Patient, Study, User
 from app.domain.texts import notification_text
 from app.services import audit
 from app.store import Store
@@ -22,25 +22,21 @@ class PatientNotificationView:
     decision: Decision
     study: Study
     treating_doctor: User
-    suggested_specialty: str | None
+    suggested_specialties: list[str]
     suggested_doctors: list[User]
+    only_treating_doctor: bool  # только повторный приём — запись лишь к лечащему врачу
+    appointments: list[tuple[Appointment, User]]
 
 
 class NotificationService:
     def __init__(self, store: Store) -> None:
         self.store = store
 
-    # --- Врач ---
+    # --- Автоотправка после решения врача ---
 
-    def notify(
-        self, user: User, decision_id: str, channel: NotificationChannel | None
-    ) -> Notification:
-        decision = self.store.get_decision(decision_id)
-        if decision is None:
-            raise NotFoundError("Решение не найдено", details={"decision_id": decision_id})
+    def notify(self, user: User, decision: Decision) -> Notification:
+        """Уведомить пациента по решению — во все доступные каналы (мок-адаптер)."""
         study = self.store.get_study(decision.study_id)
-        if not rules.is_treating_doctor(user, study):
-            raise ForbiddenError("Уведомление отправляет лечащий врач")
         if self.store.notification_for_decision(decision.id) is not None:
             raise ConflictError("Уведомление по этому решению уже отправлено")
         if not rules.can_transition(study.status, StudyStatus.NOTIFIED):
@@ -49,23 +45,22 @@ class NotificationService:
                 details={"status": str(study.status)},
             )
         patient = self.store.get_patient(study.patient_id)
-        channel = channel or NotificationChannel.SMS
+        channels = rules.contact_channels(patient, self.store.get_user(patient.user_id))
         notification = self.store.add_notification(
             Notification(
                 id=new_id("nt"),
                 decision_id=decision.id,
                 study_id=study.id,
                 patient_id=patient.id,
-                channel=channel,
-                text=notification_text(decision.chosen_type, decision.details),
+                channels=channels,
+                text=notification_text(decision.chosen_types, decision.details),
                 status=NotificationStatus.SENT,
                 sent_at=utcnow(),
             )
         )
         # Мок-адаптер: реальной отправки нет, только лог
-        logger.info(
-            "MOCK %s to %s (%s): %s", channel, patient.full_name, patient.phone, notification.text
-        )
+        for channel in channels:
+            logger.info("MOCK %s to %s: %s", channel, patient.full_name, notification.text)
         study.status = StudyStatus.NOTIFIED
         audit.record(
             self.store,
@@ -73,7 +68,7 @@ class NotificationService:
             "notification.sent",
             target_id=study.id,
             notification_id=notification.id,
-            channel=str(channel),
+            channels=[str(c) for c in channels],
         )
         return notification
 
@@ -97,15 +92,24 @@ class NotificationService:
         decision = self.store.get_decision(notification.decision_id)
         study = self.store.get_study(notification.study_id)
         treating = self.store.get_user(study.treating_doctor_id)
-        specialty = rules.suggested_specialty(decision)
-        doctors = self.store.list_doctors(specialty) if specialty else [treating]
+        specialties = rules.suggested_specialties(decision)
+        doctors: list[User] = []
+        if rules.needs_treating_doctor(decision):
+            doctors.append(treating)
+        for specialty in specialties:
+            doctors += [d for d in self.store.list_doctors(specialty) if d not in doctors]
         return PatientNotificationView(
             notification=notification,
             decision=decision,
             study=study,
             treating_doctor=treating,
-            suggested_specialty=specialty,
+            suggested_specialties=specialties,
             suggested_doctors=doctors,
+            only_treating_doctor=rules.only_treating_doctor(decision),
+            appointments=[
+                (a, self.store.get_user(a.doctor_id))
+                for a in self.store.list_appointments(notification_id=notification.id)
+            ],
         )
 
     def patient_notifications(self, user: User) -> list[PatientNotificationView]:

@@ -1,6 +1,6 @@
-"""Сценарий врача: вход → очередь → карточка → анализ → решение."""
+"""Сценарий врача: вход → очередь → карточка (AI — автоматически) → решение."""
 
-from tests.conftest import login
+from tests.conftest import analyze_all, login
 
 API = "/api/v1"
 
@@ -67,6 +67,7 @@ def test_patient_cannot_see_studies(client, kuznetsova):
 
 
 def test_card(client, petrov):
+    analyze_all(client)
     item = _study(client, petrov, status="ai_ready")
     card = client.get(f"{API}/studies/{item['id']}", headers=petrov).json()
     assert card["report_text"]
@@ -81,129 +82,163 @@ def test_unknown_study_404(client, petrov):
 # --- Сквозной сценарий ---
 
 
-def test_analyze_then_decide(client, sidorova):
-    study = _study(client, sidorova, status="new")
-    sid = study["id"]
+def test_seed_has_no_ai_answers(client, head):
+    """Ответы AI — только от сервиса; в seed их нет."""
+    items = client.get(f"{API}/studies", headers=head).json()
+    assert all(i["ai"] is None for i in items)
 
-    r = client.post(
-        f"{API}/studies/{sid}/decision",
-        headers=sidorova,
-        json={"chosen_type": "repeat_appointment", "details": {"interval_days": 30}},
-    )
-    assert r.status_code == 409  # без анализа решать нельзя
-    assert r.json()["error"]["code"] == "invalid_transition"
 
-    r = client.post(f"{API}/studies/{sid}/analyze", headers=sidorova)
-    assert r.status_code == 200, r.text
-    ai = r.json()
+def test_auto_analysis_then_decide(client, sidorova):
+    sid = _study(client, sidorova, status="new")["id"]
+    assert analyze_all(client) > 0  # врач ничего не запускает — анализ идёт сам
+
+    card = client.get(f"{API}/studies/{sid}", headers=sidorova).json()
+    assert card["status"] == "ai_ready"
+    ai = card["ai"]
     assert ai["source"] == "mock"
 
-    r = client.post(
-        f"{API}/studies/{sid}/decision",
-        headers=sidorova,
-        json={"chosen_type": "specialist_consult", "details": {"specialist": "nope"}},
+    other = next(
+        t for t in ("repeat_appointment", "specialist_consult") if t != ai["recommendation"]
     )
-    assert r.status_code == 422
-
     r = client.post(
         f"{API}/studies/{sid}/decision",
         headers=sidorova,
         json={
-            "chosen_type": ai["recommendation"],
-            "details": _details(ai["recommendation"]),
-            "comment": "Согласна",
+            "chosen_types": [ai["recommendation"], other],  # принял вариант AI и дополнил
+            "details": {**_details(ai["recommendation"]), **_details(other)},
+            "comment": "Согласна, плюс контроль",
         },
     )
     assert r.status_code == 200, r.text
     decision = r.json()
     assert decision["accepted_ai"] is True
     assert decision["ai_inference_id"] == ai["id"]
+    assert len(decision["chosen_types"]) == 2
 
     card = client.get(f"{API}/studies/{sid}", headers=sidorova).json()
-    assert card["status"] == "decided"
+    assert card["status"] == "notified"  # уведомление ушло автоматически
 
-    # повторное решение и повторный анализ после решения запрещены
     r = client.post(
         f"{API}/studies/{sid}/decision",
         headers=sidorova,
-        json={"chosen_type": "repeat_appointment", "details": {"interval_days": 5}},
+        json={"chosen_types": ["repeat_appointment"]},
     )
     assert r.status_code == 409
-    assert client.post(f"{API}/studies/{sid}/analyze", headers=sidorova).status_code == 409
 
-    actions = [
-        e["action"] for e in client.get(f"{API}/studies/{sid}/audit", headers=sidorova).json()
+    events = client.get(f"{API}/studies/{sid}/audit", headers=sidorova).json()
+    assert [e["action"] for e in events] == [
+        "study.created",
+        "ai.analyzed",
+        "decision.created",
+        "notification.sent",
     ]
-    assert actions == ["study.created", "ai.analyzed", "decision.created"]
+    assert events[1]["actor_id"] is None  # анализ запустила система
+
+
+def test_decision_without_ai(client, petrov):
+    """Врач может решить, не дожидаясь AI; потом анализ это решение не трогает."""
+    sid = _study(client, petrov, status="new")["id"]
+    r = client.post(
+        f"{API}/studies/{sid}/decision",
+        headers=petrov,
+        json={
+            "chosen_types": ["specialist_consult", "additional_research"],
+            "details": {"specialists": ["urologist", "oncologist"], "research_types": ["ct"]},
+        },
+    )
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["accepted_ai"] is None and d["ai_inference_id"] is None
+    assert d["details"] == {"specialists": ["urologist", "oncologist"], "research_types": ["ct"]}
+
+    analyze_all(client)
+    card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
+    assert card["status"] == "notified" and card["ai"] is None
+
+
+def test_decision_validation(client, petrov):
+    sid = _study(client, petrov, status="new")["id"]
+
+    def decide(body):
+        return client.post(f"{API}/studies/{sid}/decision", headers=petrov, json=body)
+
+    assert decide({"chosen_types": []}).status_code == 422  # минимум один вариант
+    assert decide({"chosen_types": ["specialist_consult"]}).status_code == 422  # нет специалистов
+    r = decide({"chosen_types": ["specialist_consult"], "details": {"specialists": ["shaman"]}})
+    assert r.status_code == 422
+    # старый формат (один вариант) принимается
+    r = decide({"chosen_type": "specialist_consult", "details": {"specialist": "oncologist"}})
+    assert r.status_code == 200, r.text
+    assert r.json()["chosen_types"] == ["specialist_consult"]
+    assert r.json()["details"] == {"specialists": ["oncologist"]}
 
 
 def _details(kind):
     return {
-        "repeat_appointment": {"interval_days": 30},
-        "specialist_consult": {"specialist": "oncologist"},
-        "additional_research": {"research_type": "biopsy"},
+        "repeat_appointment": {},
+        "specialist_consult": {"specialists": ["oncologist"]},
+        "additional_research": {"research_types": ["biopsy"]},
     }[kind]
 
 
-def test_other_doctor_cannot_act(client, petrov, sidorova):
-    study = _study(client, sidorova, status="ai_ready", scope="all")  # не Сидоровой — проверим
+def test_other_doctor_cannot_decide(client, petrov, sidorova):
+    study = _study(client, sidorova, status="new", scope="all")
     owner = study["doctor"]["full_name"]
     actor = sidorova if owner.startswith("Петров") else petrov
-    sid = study["id"]
-    assert client.post(f"{API}/studies/{sid}/analyze", headers=actor).status_code == 403
     r = client.post(
-        f"{API}/studies/{sid}/decision",
+        f"{API}/studies/{study['id']}/decision",
         headers=actor,
-        json={"chosen_type": "repeat_appointment", "details": {"interval_days": 7}},
+        json={"chosen_types": ["repeat_appointment"]},
     )
     assert r.status_code == 403
 
 
-def test_head_can_analyze_but_not_decide(client, head):
+def test_head_cannot_decide(client, head):
     study = _study(client, head, status="new", scope="all")
-    assert client.post(f"{API}/studies/{study['id']}/analyze", headers=head).status_code == 200
     r = client.post(
         f"{API}/studies/{study['id']}/decision",
         headers=head,
-        json={"chosen_type": "repeat_appointment", "details": {"interval_days": 7}},
+        json={"chosen_types": ["repeat_appointment"]},
     )
     assert r.status_code == 403
 
 
-def test_reanalyze_keeps_history(client, petrov):
-    study = _study(client, petrov, status="ai_ready")
-    r = client.post(f"{API}/studies/{study['id']}/analyze", headers=petrov)
-    assert r.status_code == 200
-    history = client.get(f"{API}/studies/{study['id']}/history", headers=petrov).json()
-    assert len(history["inferences"]) == 2
-    actions = [
-        e["action"] for e in client.get(f"{API}/studies/{study['id']}/audit", headers=petrov).json()
-    ]
-    assert actions[-1] == "ai.reanalyzed"
-
-
-def test_decision_without_ai_after_failure(client, petrov):
-    study = _study(client, petrov, status="ai_failed")
-    r = client.post(
-        f"{API}/studies/{study['id']}/decision",
-        headers=petrov,
-        json={"chosen_type": "specialist_consult", "details": {"specialist": "urologist"}},
-    )
-    assert r.status_code == 200
-    assert r.json()["accepted_ai"] is None
-
-
-def test_ai_failure_marks_study(client, petrov):
-    # Подменяем текст заключения маркером сбоя mock-провайдера
-    store = client.app.state.store
+def test_manual_analyze_endpoint_removed(client, petrov):
     study = _study(client, petrov, status="new")
-    store.get_study(study["id"]).report_text += " [[ai_fail]]"
-    r = client.post(f"{API}/studies/{study['id']}/analyze", headers=petrov)
-    assert r.status_code == 502
-    assert r.json()["error"]["code"] == "ai_failed"
-    assert (
-        client.get(f"{API}/studies/{study['id']}", headers=petrov).json()["status"] == "ai_failed"
+    assert client.post(f"{API}/studies/{study['id']}/analyze", headers=petrov).status_code in (
+        404,
+        405,
     )
+
+
+def test_ai_failure_then_automatic_retry(client, petrov):
+    # Маркер сбоя mock-провайдера: AI «не отвечает»
+    store = client.app.state.store
+    sid = _study(client, petrov, status="new")["id"]
+    study = store.get_study(sid)
+    study.report_text += " [[ai_fail]]"
+    analyze_all(client)
+    card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
+    assert card["status"] == "ai_failed" and card["ai"] is None
+    events = client.get(f"{API}/studies/{sid}/audit", headers=petrov).json()
+    assert events[-1]["action"] == "ai.failed"
+
+    # Повторные неудачи не засоряют таймлайн: одно событие на серию сбоев
+    analyzer = client.app.state.analyzer
+    analyzer.retry_s = 0
+    analyze_all(client)
+    events = client.get(f"{API}/studies/{sid}/audit", headers=petrov).json()
+    assert [e["action"] for e in events].count("ai.failed") == 1
+
+    # Сервис «поднялся» — следующий проход после паузы повторит анализ сам
+    study.report_text = study.report_text.replace(" [[ai_fail]]", "")
+    analyze_all(client)
+    assert client.get(f"{API}/studies/{sid}", headers=petrov).json()["status"] == "ai_ready"
+
+
+def test_reanalysis_not_repeated_after_success(client, petrov):
+    analyze_all(client)
+    assert analyze_all(client) == 0  # всё уже проанализировано
 
 
 def test_manual_ai_result_upload(client, petrov):
@@ -252,6 +287,12 @@ def test_ai_models_and_dictionaries(client, petrov):
     assert client.get(f"{API}/ai/models", headers=petrov).json()
     d = client.get(f"{API}/dictionaries", headers=petrov).json()
     assert {"recommendation_types", "specialists", "research_types"} <= d.keys()
+
+
+def test_dictionaries_are_public(client):
+    r = client.get(f"{API}/dictionaries")
+    assert r.status_code == 200
+    assert r.json()["specialists"]
 
 
 def test_patient_can_login_but_not_use_ai(client):

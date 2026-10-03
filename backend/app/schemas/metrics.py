@@ -59,8 +59,9 @@ class DecisionRow(BaseModel):
     doctor_name: str
     ai_recommendation: str | None
     ai_confidence: float | None
-    chosen_type: str
+    chosen_types: list[str]
     accepted_ai: bool | None
+    details_match: bool | None
     created_at: str
 
 
@@ -68,6 +69,7 @@ class DashboardOut(BaseModel):
     summary: Summary
     agreement: Rate
     agreement_by_confidence: AgreementByConfidence
+    details_agreement: Rate
     confusion_matrix: ConfusionMatrix
     latency: Latency
     by_doctor: list[DoctorRow]

@@ -26,12 +26,10 @@ def test_counts(store):
     assert roles[Role.DOCTOR] == 7
     assert roles[Role.PATIENT] == 10
     assert len(store.studies) == 15
+    # Ответов AI в seed нет: всё, что без решения, ждёт автоанализа
     assert Counter(s.status for s in store.studies.values()) == {
-        S.NEW: 5,
-        S.AI_READY: 3,
-        S.AI_FAILED: 1,
-        S.DECIDED: 3,
-        S.NOTIFIED: 2,
+        S.NEW: 9,
+        S.NOTIFIED: 5,  # уведомление уходит сразу после решения
         S.COMPLETED: 1,
     }
 
@@ -49,13 +47,12 @@ def test_every_patient_has_login(store):
 
 
 def test_status_consistency(store):
+    assert not store.inferences  # никаких «готовых» ответов AI
     for study in store.studies.values():
-        inference = store.latest_inference(study.id)
         decision = store.decision_for_study(study.id)
         notification = store.notification_for_decision(decision.id) if decision else None
 
-        assert (inference is None) == (study.status in {S.NEW, S.AI_FAILED})
-        assert (decision is None) == (study.status in {S.NEW, S.AI_READY, S.AI_FAILED})
+        assert (decision is None) == (study.status is S.NEW)
         assert (notification is None) == (study.status not in {S.NOTIFIED, S.COMPLETED})
         if study.status is S.COMPLETED:
             assert notification.patient_action is not None
@@ -63,29 +60,11 @@ def test_status_consistency(store):
             assert notification.patient_action is None
 
 
-def test_decision_snapshot_and_accepted_ai(store):
+def test_seed_decisions_are_without_ai(store):
     for d in store.decisions.values():
-        latest = store.latest_inference(d.study_id)
-        assert d.ai_inference_id == latest.id
-        assert d.ai_recommendation == latest.recommendation
-        assert d.accepted_ai == rules.compute_accepted_ai(d.chosen_type, d.ai_recommendation)
-
-
-def test_dashboard_story(store):
-    """4 из 6 решений совпадают с AI; все расхождения — при confidence < 0.7."""
-    decisions = list(store.decisions.values())
-    assert sum(d.accepted_ai for d in decisions) == 4
-    assert all(d.accepted_ai for d in decisions if d.ai_confidence >= 0.7)
-    assert not any(d.accepted_ai for d in decisions if d.ai_confidence < 0.7)
-
-
-def test_ranked_options_valid(store):
-    for inf in store.inferences.values():
-        scores = [o.score for o in inf.ranked_options]
-        assert len({o.type for o in inf.ranked_options}) == 3
-        assert scores == sorted(scores, reverse=True)
-        assert inf.ranked_options[0].type == inf.recommendation
-        assert abs(sum(scores) - 1) < 0.02
+        assert d.ai_inference_id is None and d.accepted_ai is None
+        assert d.chosen_types
+    assert any(len(d.chosen_types) > 1 for d in store.decisions.values())  # есть комбинированные
 
 
 def test_appointments_are_bookable_slots_without_conflicts(store):
@@ -108,8 +87,8 @@ def test_live_demo_patient_has_unanswered_notification(store):
     [notification] = store.notifications_for_patient(patient.id)
     assert notification.patient_action is None
     decision = store.get_decision(notification.decision_id)
-    specialty = rules.suggested_specialty(decision)
-    assert store.list_doctors(specialty)  # есть к кому записаться
+    for specialty in rules.suggested_specialties(decision):
+        assert store.list_doctors(specialty)  # есть к кому записаться
 
 
 def test_every_study_has_audit_trail(store):

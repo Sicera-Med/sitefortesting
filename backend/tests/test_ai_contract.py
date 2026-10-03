@@ -66,3 +66,42 @@ def test_soft_fixes():
     joined = " ".join(r.warnings)
     for fragment in ("request_id", "model", "magic", "missing", "reordered"):
         assert fragment in joined
+
+
+def test_details_research_types_kept():
+    data = {**GOOD, "details": {"research_types": ["ct_contrast", "lab_tests"]}}
+    r = parse_ai_response(data, expected_request_id="req_1")
+    assert r.details == {"research_types": ["ct_contrast", "lab_tests"]}
+    assert r.warnings == ()
+    assert r.to_contract_json()["details"] == r.details
+
+
+def test_details_are_optional():
+    assert parse_ai_response(GOOD, expected_request_id="req_1").details == {}
+
+
+def test_details_soft_validation():
+    data = {**GOOD, "details": {"research_types": ["ct", "mri_of_soul", "ct"]}}
+    r = parse_ai_response(data, expected_request_id="req_1")
+    assert r.details == {"research_types": ["ct"]}  # неизвестное выброшено, дубли схлопнуты
+    assert any("mri_of_soul" in w for w in r.warnings)
+
+    legacy = parse_ai_response(
+        {**GOOD, "details": {"research_type": "biopsy"}}, expected_request_id="req_1"
+    )
+    assert legacy.details == {"research_types": ["biopsy"]}
+
+    consult = {**GOOD, "recommendation": "specialist_consult", "confidence": 0.9}
+    ok = parse_ai_response(
+        {**consult, "details": {"specialist": "oncologist"}}, expected_request_id="req_1"
+    )
+    assert ok.details == {"specialists": ["oncologist"]}  # старый формат → список
+    many = parse_ai_response(
+        {**consult, "details": {"specialists": ["oncologist", "pulmonologist"]}},
+        expected_request_id="req_1",
+    )
+    assert many.details == {"specialists": ["oncologist", "pulmonologist"]}
+    bad = parse_ai_response(
+        {**consult, "details": {"specialist": "shaman"}}, expected_request_id="req_1"
+    )
+    assert bad.details == {} and any("shaman" in w for w in bad.warnings)

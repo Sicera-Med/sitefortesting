@@ -30,10 +30,13 @@ class MetricsService:
     def dashboard(self) -> dict[str, Any]:
         decisions = self.store.list_decisions()  # новые сверху
         with_ai = [d for d in decisions if d.accepted_ai is not None]
+        compared = [d for d in decisions if d.details_match is not None]
         return {
             "summary": self._summary(decisions),
             "agreement": _rate(sum(d.accepted_ai for d in with_ai), len(with_ai)),
             "agreement_by_confidence": self._by_confidence(with_ai),
+            # Детали (специалист / исследования) — среди решений, где тип совпал с AI
+            "details_agreement": _rate(sum(d.details_match for d in compared), len(compared)),
             "confusion_matrix": self._confusion(with_ai),
             "latency": self._latency(),
             "by_doctor": self._by_doctor(decisions),
@@ -63,9 +66,14 @@ class MetricsService:
 
     @staticmethod
     def _confusion(with_ai: list[Decision]) -> dict[str, Any]:
-        """Строки — рекомендация AI, столбцы — решение врача."""
+        """Строки — рекомендация AI, столбцы — что выбрал врач.
+
+        Врач может выбрать несколько вариантов — решение попадает в каждый выбранный столбец.
+        """
         labels = [str(t) for t in RecommendationType]
-        counts = Counter((str(d.ai_recommendation), str(d.chosen_type)) for d in with_ai)
+        counts = Counter(
+            (str(d.ai_recommendation), str(t)) for d in with_ai for t in d.chosen_types
+        )
         return {
             "labels": labels,
             "matrix": [[counts.get((ai, doc), 0) for doc in labels] for ai in labels],
@@ -107,7 +115,7 @@ class MetricsService:
             sent = [
                 n
                 for n in self.store.list_notifications()
-                if self.store.get_decision(n.decision_id).chosen_type is kind
+                if kind in self.store.get_decision(n.decision_id).chosen_types
             ]
             actions = Counter(n.patient_action for n in sent)
             booked = actions.get(PatientActionType.BOOKED, 0)
@@ -135,7 +143,8 @@ class MetricsService:
             "doctor_name": doctor.full_name,
             "ai_recommendation": str(d.ai_recommendation) if d.ai_recommendation else None,
             "ai_confidence": d.ai_confidence,
-            "chosen_type": str(d.chosen_type),
+            "chosen_types": [str(t) for t in d.chosen_types],
             "accepted_ai": d.accepted_ai,
+            "details_match": d.details_match,
             "created_at": d.created_at.isoformat(),
         }

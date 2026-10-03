@@ -44,6 +44,7 @@ def _study(status: StudyStatus = S.AI_READY, doctor_id: str = "usr_1") -> Study:
         (S.AI_FAILED, S.AI_READY),
         (S.AI_READY, S.DECIDED),
         (S.AI_FAILED, S.DECIDED),  # решение без AI
+        (S.NEW, S.DECIDED),  # врач может не ждать AI
         (S.DECIDED, S.NOTIFIED),
         (S.NOTIFIED, S.COMPLETED),
     ],
@@ -55,7 +56,6 @@ def test_allowed_transitions(src, dst):
 @pytest.mark.parametrize(
     ("src", "dst"),
     [
-        (S.NEW, S.DECIDED),  # нельзя решить, не запустив анализ
         (S.DECIDED, S.AI_READY),  # после решения анализ не перезапускается
         (S.DECIDED, S.COMPLETED),
         (S.COMPLETED, S.NEW),
@@ -92,14 +92,28 @@ def test_can_act_flag():
     assert not rules.can_act(doctor, _study(S.COMPLETED))
     assert not rules.can_act(other, _study(S.AI_READY))
     head = _user(Role.HEAD, "usr_9")
-    assert rules.can_act(head, _study(S.NEW))  # может запустить анализ
+    assert rules.can_act(head, _study(S.NEW))  # может загрузить ответ AI вручную
     assert not rules.can_act(head, _study(S.DECIDED))
 
 
 def test_accepted_ai():
-    assert rules.compute_accepted_ai(R.SPECIALIST_CONSULT, R.SPECIALIST_CONSULT) is True
-    assert rules.compute_accepted_ai(R.SPECIALIST_CONSULT, R.REPEAT_APPOINTMENT) is False
-    assert rules.compute_accepted_ai(R.SPECIALIST_CONSULT, None) is None
+    consult = (R.SPECIALIST_CONSULT,)
+    assert rules.compute_accepted_ai(consult, R.SPECIALIST_CONSULT) is True
+    assert rules.compute_accepted_ai(consult, R.REPEAT_APPOINTMENT) is False
+    assert rules.compute_accepted_ai(consult, None) is None
+    # принял вариант AI и дополнил своим — согласие
+    both = (R.REPEAT_APPOINTMENT, R.SPECIALIST_CONSULT)
+    assert rules.compute_accepted_ai(both, R.SPECIALIST_CONSULT) is True
+
+
+def test_details_match_compares_ai_option_only():
+    chosen = (R.SPECIALIST_CONSULT, R.ADDITIONAL_RESEARCH)
+    details = {"specialists": ["oncologist", "urologist"], "research_types": ["ct"]}
+    ai = {"specialists": ["urologist", "oncologist"]}
+    assert rules.compute_details_match(chosen, details, R.SPECIALIST_CONSULT, ai) is True
+    ai = {"specialists": ["oncologist"]}
+    assert rules.compute_details_match(chosen, details, R.SPECIALIST_CONSULT, ai) is False
+    assert rules.compute_details_match(chosen, details, R.REPEAT_APPOINTMENT, {}) is None
 
 
 def test_patient_age():

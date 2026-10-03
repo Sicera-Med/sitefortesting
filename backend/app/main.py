@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -14,6 +16,9 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import setup_logging
 from app.core.request_id import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.seed import DEMO_PASSWORD, seed_demo
+from app.services.ai_service import AIService
+from app.services.auto_analyze import AutoAnalyzer
+from app.services.studies import StudyService
 from app.store import Store
 
 logger = logging.getLogger(__name__)
@@ -70,10 +75,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     app.state.store = build_store(settings)
     app.state.ai = build_ai_provider(settings)
-    logger.info("AI provider: %s", settings.AI_PROVIDER)
+    logger.info("AI provider: %s (%s)", settings.AI_PROVIDER, settings.AI_BASE_URL)
+    app.state.analyzer = AutoAnalyzer(
+        StudyService(
+            app.state.store,
+            AIService(app.state.ai, app.state.store, timeout_s=settings.AI_TIMEOUT_S),
+        ),
+        poll_s=settings.AI_POLL_S,
+        retry_s=settings.AI_RETRY_S,
+    )
+    task = (
+        asyncio.create_task(app.state.analyzer.run_forever()) if settings.AI_AUTO_ANALYZE else None
+    )
     try:
         yield
     finally:
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         await app.state.ai.aclose()
 
 

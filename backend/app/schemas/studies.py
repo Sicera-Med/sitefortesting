@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.domain.enums import (
     AISource,
@@ -43,6 +43,7 @@ class InferenceOut(BaseModel):
     confidence: float
     ranked_options: list[RankedOptionOut]
     reasons: list[ReasonOut]
+    details: dict[str, Any]
     latency_ms: int
     created_at: datetime
 
@@ -58,6 +59,7 @@ class InferenceOut(BaseModel):
             confidence=i.confidence,
             ranked_options=[RankedOptionOut(type=o.type, score=o.score) for o in i.ranked_options],
             reasons=[ReasonOut(code=r.code, label=r.label, weight=r.weight) for r in i.reasons],
+            details=i.details,
             latency_ms=i.latency_ms,
             created_at=i.created_at,
         )
@@ -72,22 +74,33 @@ class InferenceBrief(BaseModel):
 
 
 class DecisionIn(BaseModel):
-    chosen_type: RecommendationType
+    # От одного до всех трёх вариантов
+    chosen_types: list[RecommendationType] = Field(min_length=1, max_length=3)
     details: dict[str, Any] = Field(default_factory=dict)
     comment: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_single(cls, data: Any) -> Any:
+        # Старый формат: один chosen_type
+        if isinstance(data, dict) and "chosen_types" not in data and "chosen_type" in data:
+            data = {**data, "chosen_types": [data["chosen_type"]]}
+        return data
 
 
 class DecisionOut(BaseModel):
     id: str
     study_id: str
     doctor_id: str
-    chosen_type: RecommendationType
+    chosen_types: list[RecommendationType]
     details: dict[str, Any]
     comment: str | None
     ai_inference_id: str | None
     ai_recommendation: RecommendationType | None
     ai_confidence: float | None
     accepted_ai: bool | None
+    ai_details: dict[str, Any] | None
+    details_match: bool | None
     created_at: datetime
 
     @classmethod
@@ -96,19 +109,21 @@ class DecisionOut(BaseModel):
             id=d.id,
             study_id=d.study_id,
             doctor_id=d.doctor_id,
-            chosen_type=d.chosen_type,
+            chosen_types=list(d.chosen_types),
             details=d.details,
             comment=d.comment,
             ai_inference_id=d.ai_inference_id,
             ai_recommendation=d.ai_recommendation,
             ai_confidence=d.ai_confidence,
             accepted_ai=d.accepted_ai,
+            ai_details=d.ai_details,
+            details_match=d.details_match,
             created_at=d.created_at,
         )
 
 
 class DecisionBrief(BaseModel):
-    chosen_type: RecommendationType
+    chosen_types: list[RecommendationType]
     accepted_ai: bool | None
 
 
@@ -118,7 +133,7 @@ class DecisionBrief(BaseModel):
 class NotificationOut(BaseModel):
     id: str
     decision_id: str
-    channel: NotificationChannel
+    channels: list[NotificationChannel]
     text: str
     status: NotificationStatus
     sent_at: datetime
@@ -132,7 +147,7 @@ class NotificationOut(BaseModel):
         return cls(
             id=n.id,
             decision_id=n.decision_id,
-            channel=n.channel,
+            channels=list(n.channels),
             text=n.text,
             status=n.status,
             sent_at=n.sent_at,
@@ -182,7 +197,7 @@ class StudyListItem(BaseModel):
             if v.inference
             else None,
             decision=DecisionBrief(
-                chosen_type=v.decision.chosen_type, accepted_ai=v.decision.accepted_ai
+                chosen_types=list(v.decision.chosen_types), accepted_ai=v.decision.accepted_ai
             )
             if v.decision
             else None,
@@ -203,20 +218,12 @@ class StudyCard(BaseModel):
     ai: InferenceOut | None
     decision: DecisionOut | None
     notification: NotificationOut | None
-    appointment: CardAppointmentOut | None
+    appointments: list[CardAppointmentOut]
     can_act: bool
 
     @classmethod
     def build(cls, v: StudyView) -> StudyCard:
         s = v.study
-        appointment = None
-        if v.appointment and v.appointment_doctor:
-            appointment = CardAppointmentOut(
-                id=v.appointment.id,
-                doctor=DoctorBrief.build(v.appointment_doctor),
-                scheduled_for=v.appointment.scheduled_for,
-                status=v.appointment.status,
-            )
         return cls(
             id=s.id,
             status=s.status,
@@ -230,7 +237,15 @@ class StudyCard(BaseModel):
             ai=InferenceOut.build(v.inference) if v.inference else None,
             decision=DecisionOut.build(v.decision) if v.decision else None,
             notification=NotificationOut.build(v.notification) if v.notification else None,
-            appointment=appointment,
+            appointments=[
+                CardAppointmentOut(
+                    id=a.id,
+                    doctor=DoctorBrief.build(doctor),
+                    scheduled_for=a.scheduled_for,
+                    status=a.status,
+                )
+                for a, doctor in v.appointments
+            ],
             can_act=v.can_act,
         )
 
