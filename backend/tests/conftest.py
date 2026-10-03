@@ -21,3 +21,29 @@ def _test_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 def client() -> Iterator[TestClient]:
     with TestClient(create_app()) as c:  # with — чтобы отработал lifespan
         yield c
+
+
+def login(client: TestClient, email: str, password: str = "demo") -> dict[str, str]:
+    r = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+@pytest.fixture
+def petrov(client: TestClient) -> dict[str, str]:
+    return login(client, "petrov@clinic.demo")
+
+
+@pytest.fixture
+def sidorova(client: TestClient) -> dict[str, str]:
+    return login(client, "sidorova@clinic.demo")
+
+
+@pytest.fixture
+def head(client: TestClient) -> dict[str, str]:
+    return login(client, "head@clinic.demo")
+
+
+@pytest.fixture
+def kuznetsova(client: TestClient) -> dict[str, str]:
+    return login(client, "kuznetsova@patient.demo")

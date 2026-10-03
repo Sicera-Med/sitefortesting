@@ -6,9 +6,9 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.core.config import Settings
+from app.core.context import request_id_ctx
 from app.core.errors import ForbiddenError, UnauthorizedError
 from app.core.logging import JsonFormatter
-from app.core.request_id import request_id_ctx
 from app.main import create_app
 
 
