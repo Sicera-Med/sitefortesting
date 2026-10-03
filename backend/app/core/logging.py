@@ -6,7 +6,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from app.core.request_id import request_id_ctx
+from app.core.context import request_id_ctx
 
 # Стандартные атрибуты LogRecord, которые не должны попадать в payload.
 _STD_ATTRS = set(logging.makeLogRecord({}).__dict__.keys()) | {

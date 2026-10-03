@@ -1,0 +1,720 @@
+[
+  {
+    "id": "ct_chest_mass",
+    "match": {
+      "study_type": "ct",
+      "body_region": "chest",
+      "keywords": [
+        "спикул",
+        "образование",
+        "лимфаденопат",
+        "злокачеств"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "ct-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "additional_research",
+      "confidence": 0.93,
+      "ranked_options": [
+        {
+          "type": "additional_research",
+          "score": 0.93
+        },
+        {
+          "type": "repeat_appointment",
+          "score": 0.05
+        },
+        {
+          "type": "specialist_consult",
+          "score": 0.02
+        }
+      ],
+      "reasons": [
+        {
+          "code": "mass_32mm",
+          "label": "Образование 32 мм со спикулами",
+          "weight": 0.46
+        },
+        {
+          "code": "mediastinal_ln",
+          "label": "Лимфаденопатия средостения",
+          "weight": 0.28
+        },
+        {
+          "code": "pleural_retraction",
+          "label": "Втяжение плевры",
+          "weight": 0.12
+        }
+      ]
+    }
+  },
+  {
+    "id": "ct_chest_regress",
+    "match": {
+      "study_type": "ct",
+      "body_region": "chest",
+      "keywords": [
+        "регресс",
+        "положительная динамика"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "ct-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "repeat_appointment",
+      "confidence": 0.88,
+      "ranked_options": [
+        {
+          "type": "repeat_appointment",
+          "score": 0.88
+        },
+        {
+          "type": "specialist_consult",
+          "score": 0.08
+        },
+        {
+          "type": "additional_research",
+          "score": 0.04
+        }
+      ],
+      "reasons": [
+        {
+          "code": "full_regression",
+          "label": "Полный регресс изменений",
+          "weight": 0.51
+        },
+        {
+          "code": "no_new_lesions",
+          "label": "Новых очагов нет",
+          "weight": 0.27
+        }
+      ]
+    }
+  },
+  {
+    "id": "ct_chest_nodule",
+    "match": {
+      "study_type": "ct",
+      "body_region": "chest",
+      "keywords": [
+        "узел",
+        "fleischner"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "ct-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "additional_research",
+      "confidence": 0.86,
+      "ranked_options": [
+        {
+          "type": "additional_research",
+          "score": 0.86
+        },
+        {
+          "type": "repeat_appointment",
+          "score": 0.09
+        },
+        {
+          "type": "specialist_consult",
+          "score": 0.05
+        }
+      ],
+      "reasons": [
+        {
+          "code": "solid_nodule",
+          "label": "Солидный узел лёгкого",
+          "weight": 0.44
+        },
+        {
+          "code": "fleischner",
+          "label": "Категория риска по Fleischner",
+          "weight": 0.3
+        }
+      ]
+    }
+  },
+  {
+    "id": "ct_chest_pneumonia",
+    "match": {
+      "study_type": "ct",
+      "body_region": "chest",
+      "keywords": [
+        "пневмони",
+        "консолидац"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "ct-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "repeat_appointment",
+      "confidence": 0.62,
+      "ranked_options": [
+        {
+          "type": "repeat_appointment",
+          "score": 0.62
+        },
+        {
+          "type": "specialist_consult",
+          "score": 0.25
+        },
+        {
+          "type": "additional_research",
+          "score": 0.13
+        }
+      ],
+      "reasons": [
+        {
+          "code": "consolidation",
+          "label": "Участки консолидации",
+          "weight": 0.37
+        },
+        {
+          "code": "pleural_effusion",
+          "label": "Плевральный выпот",
+          "weight": 0.18
+        }
+      ]
+    }
+  },
+  {
+    "id": "ct_chest_emphysema",
+    "match": {
+      "study_type": "ct",
+      "body_region": "chest",
+      "keywords": [
+        "эмфизем",
+        "бронхит"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "ct-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "specialist_consult",
+      "confidence": 0.78,
+      "ranked_options": [
+        {
+          "type": "specialist_consult",
+          "score": 0.78
+        },
+        {
+          "type": "repeat_appointment",
+          "score": 0.15
+        },
+        {
+          "type": "additional_research",
+          "score": 0.07
+        }
+      ],
+      "reasons": [
+        {
+          "code": "emphysema",
+          "label": "Эмфизема лёгких",
+          "weight": 0.44
+        },
+        {
+          "code": "bronchial_wall",
+          "label": "Утолщение стенок бронхов",
+          "weight": 0.27
+        }
+      ]
+    }
+  },
+  {
+    "id": "xray_chest_normal",
+    "match": {
+      "study_type": "xray",
+      "body_region": "chest",
+      "keywords": [
+        "не выявлено",
+        "прозрачн"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "xray-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "repeat_appointment",
+      "confidence": 0.9,
+      "ranked_options": [
+        {
+          "type": "repeat_appointment",
+          "score": 0.9
+        },
+        {
+          "type": "specialist_consult",
+          "score": 0.07
+        },
+        {
+          "type": "additional_research",
+          "score": 0.03
+        }
+      ],
+      "reasons": [
+        {
+          "code": "no_pathology",
+          "label": "Патологических изменений нет",
+          "weight": 0.62
+        }
+      ]
+    }
+  },
+  {
+    "id": "xray_chest_pneumonia",
+    "match": {
+      "study_type": "xray",
+      "body_region": "chest",
+      "keywords": [
+        "инфильтрац",
+        "пневмони"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "xray-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "additional_research",
+      "confidence": 0.58,
+      "ranked_options": [
+        {
+          "type": "additional_research",
+          "score": 0.58
+        },
+        {
+          "type": "repeat_appointment",
+          "score": 0.28
+        },
+        {
+          "type": "specialist_consult",
+          "score": 0.14
+        }
+      ],
+      "reasons": [
+        {
+          "code": "infiltrate",
+          "label": "Инфильтрация лёгочной ткани",
+          "weight": 0.36
+        },
+        {
+          "code": "ct_clarify",
+          "label": "КТ уточнит распространённость",
+          "weight": 0.1
+        }
+      ]
+    }
+  },
+  {
+    "id": "xray_knee_oa",
+    "match": {
+      "study_type": "xray",
+      "body_region": "knee",
+      "keywords": [
+        "гонартроз",
+        "остеофит"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "xray-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "specialist_consult",
+      "confidence": 0.82,
+      "ranked_options": [
+        {
+          "type": "specialist_consult",
+          "score": 0.82
+        },
+        {
+          "type": "repeat_appointment",
+          "score": 0.12
+        },
+        {
+          "type": "additional_research",
+          "score": 0.06
+        }
+      ],
+      "reasons": [
+        {
+          "code": "knee_oa",
+          "label": "Гонартроз",
+          "weight": 0.47
+        },
+        {
+          "code": "osteophytes",
+          "label": "Краевые остеофиты",
+          "weight": 0.13
+        }
+      ]
+    }
+  },
+  {
+    "id": "xray_spine_oc",
+    "match": {
+      "study_type": "xray",
+      "body_region": "spine",
+      "keywords": [
+        "остеохондроз",
+        "дисков"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "xray-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "additional_research",
+      "confidence": 0.71,
+      "ranked_options": [
+        {
+          "type": "additional_research",
+          "score": 0.71
+        },
+        {
+          "type": "repeat_appointment",
+          "score": 0.19
+        },
+        {
+          "type": "specialist_consult",
+          "score": 0.1
+        }
+      ],
+      "reasons": [
+        {
+          "code": "disc_height_loss",
+          "label": "Снижение высоты дисков",
+          "weight": 0.35
+        },
+        {
+          "code": "mri_for_hernia",
+          "label": "МРТ для исключения грыжи",
+          "weight": 0.26
+        }
+      ]
+    }
+  },
+  {
+    "id": "mri_knee_meniscus",
+    "match": {
+      "study_type": "mri",
+      "body_region": "knee",
+      "keywords": [
+        "мениск",
+        "разрыв"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "mri-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "specialist_consult",
+      "confidence": 0.89,
+      "ranked_options": [
+        {
+          "type": "specialist_consult",
+          "score": 0.89
+        },
+        {
+          "type": "repeat_appointment",
+          "score": 0.07
+        },
+        {
+          "type": "additional_research",
+          "score": 0.04
+        }
+      ],
+      "reasons": [
+        {
+          "code": "meniscus_tear",
+          "label": "Разрыв мениска (Stoller 3)",
+          "weight": 0.52
+        },
+        {
+          "code": "synovitis",
+          "label": "Синовит",
+          "weight": 0.16
+        }
+      ]
+    }
+  },
+  {
+    "id": "mri_brain_sva",
+    "match": {
+      "study_type": "mri",
+      "body_region": "head",
+      "keywords": [
+        "микроангиопат",
+        "fazekas"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "mri-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "repeat_appointment",
+      "confidence": 0.74,
+      "ranked_options": [
+        {
+          "type": "repeat_appointment",
+          "score": 0.74
+        },
+        {
+          "type": "specialist_consult",
+          "score": 0.17
+        },
+        {
+          "type": "additional_research",
+          "score": 0.09
+        }
+      ],
+      "reasons": [
+        {
+          "code": "fazekas",
+          "label": "Шкала Fazekas 1",
+          "weight": 0.41
+        },
+        {
+          "code": "small_wm_lesions",
+          "label": "Мелкие очаги в белом веществе",
+          "weight": 0.24
+        }
+      ]
+    }
+  },
+  {
+    "id": "mri_spine_hernia",
+    "match": {
+      "study_type": "mri",
+      "body_region": "spine",
+      "keywords": [
+        "грыжа",
+        "компресси"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "mri-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "specialist_consult",
+      "confidence": 0.91,
+      "ranked_options": [
+        {
+          "type": "specialist_consult",
+          "score": 0.91
+        },
+        {
+          "type": "repeat_appointment",
+          "score": 0.06
+        },
+        {
+          "type": "additional_research",
+          "score": 0.03
+        }
+      ],
+      "reasons": [
+        {
+          "code": "disc_herniation",
+          "label": "Грыжа диска",
+          "weight": 0.45
+        },
+        {
+          "code": "root_compression",
+          "label": "Компрессия корешка",
+          "weight": 0.33
+        }
+      ]
+    }
+  },
+  {
+    "id": "us_thyroid_tirads5",
+    "match": {
+      "study_type": "ultrasound",
+      "body_region": "neck",
+      "keywords": [
+        "ti-rads 5",
+        "микрокальцинат"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "ultrasound-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "additional_research",
+      "confidence": 0.92,
+      "ranked_options": [
+        {
+          "type": "additional_research",
+          "score": 0.92
+        },
+        {
+          "type": "repeat_appointment",
+          "score": 0.05
+        },
+        {
+          "type": "specialist_consult",
+          "score": 0.03
+        }
+      ],
+      "reasons": [
+        {
+          "code": "tirads5",
+          "label": "TI-RADS 5",
+          "weight": 0.49
+        },
+        {
+          "code": "microcalcifications",
+          "label": "Микрокальцинаты",
+          "weight": 0.25
+        },
+        {
+          "code": "taller_than_wide",
+          "label": "Форма «выше, чем шире»",
+          "weight": 0.12
+        }
+      ]
+    }
+  },
+  {
+    "id": "us_liver_steatosis",
+    "match": {
+      "study_type": "ultrasound",
+      "body_region": "abdomen",
+      "keywords": [
+        "гепатоз",
+        "гепатомегал"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "ultrasound-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "specialist_consult",
+      "confidence": 0.69,
+      "ranked_options": [
+        {
+          "type": "specialist_consult",
+          "score": 0.69
+        },
+        {
+          "type": "repeat_appointment",
+          "score": 0.21
+        },
+        {
+          "type": "additional_research",
+          "score": 0.1
+        }
+      ],
+      "reasons": [
+        {
+          "code": "hepatomegaly",
+          "label": "Гепатомегалия",
+          "weight": 0.33
+        },
+        {
+          "code": "steatosis",
+          "label": "Признаки жирового гепатоза",
+          "weight": 0.29
+        }
+      ]
+    }
+  },
+  {
+    "id": "us_kidney_stone",
+    "match": {
+      "study_type": "ultrasound",
+      "body_region": "kidneys",
+      "keywords": [
+        "конкремент"
+      ]
+    },
+    "response": {
+      "model": {
+        "name": "ultrasound-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "specialist_consult",
+      "confidence": 0.76,
+      "ranked_options": [
+        {
+          "type": "specialist_consult",
+          "score": 0.76
+        },
+        {
+          "type": "repeat_appointment",
+          "score": 0.16
+        },
+        {
+          "type": "additional_research",
+          "score": 0.08
+        }
+      ],
+      "reasons": [
+        {
+          "code": "kidney_stone",
+          "label": "Конкремент почки 6 мм",
+          "weight": 0.42
+        },
+        {
+          "code": "no_obstruction",
+          "label": "Без нарушения уродинамики",
+          "weight": 0.15
+        }
+      ]
+    }
+  },
+  {
+    "id": "generic_fallback",
+    "match": {
+      "study_type": null,
+      "body_region": null,
+      "keywords": []
+    },
+    "response": {
+      "model": {
+        "name": "generic-triage",
+        "version": "0.1.0"
+      },
+      "recommendation": "repeat_appointment",
+      "confidence": 0.55,
+      "ranked_options": [
+        {
+          "type": "repeat_appointment",
+          "score": 0.55
+        },
+        {
+          "type": "specialist_consult",
+          "score": 0.3
+        },
+        {
+          "type": "additional_research",
+          "score": 0.15
+        }
+      ],
+      "reasons": [
+        {
+          "code": "no_specific_findings",
+          "label": "Специфичных находок не выделено",
+          "weight": 0.3
+        }
+      ]
+    }
+  }
+]

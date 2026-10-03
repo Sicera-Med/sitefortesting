@@ -65,6 +65,13 @@ class InternalDomainError(DomainError):
     code = "internal_error"
 
 
+class AIFailedError(DomainError):
+    """AI-сервис упал, не ответил или ответил не по контракту. Сообщение видно фронту."""
+
+    status_code = status.HTTP_502_BAD_GATEWAY
+    code = "ai_failed"
+
+
 # Коды для стандартных HTTP-ошибок (404 на неизвестный путь, 405 и т.п.)
 _HTTP_CODES: dict[int, str] = {
     400: "bad_request",
@@ -107,8 +114,8 @@ def register_exception_handlers(app: FastAPI) -> None:
             request.url.path,
             exc.details,
         )
-        if exc.status_code >= 500:
-            # Внутренние детали наружу не отдаём (ТЗ 8.2)
+        if isinstance(exc, InternalDomainError):
+            # Внутренние детали наружу не отдаём
             return _error_response(exc.status_code, "internal_error", "Internal server error")
         return _error_response(exc.status_code, exc.code, exc.message, exc.details, exc.headers)
 

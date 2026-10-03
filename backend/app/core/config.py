@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_DEFAULT_JWT_SECRET = "dev-secret-change-me"
+_DEFAULT_JWT_SECRET = "dev-secret-change-me-in-prod-0123456789"  # ≥ 32 байт для HS256
 
 
 class Settings(BaseSettings):
@@ -39,10 +39,11 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: Literal["HS256"] = "HS256"
     JWT_TTL_MIN: int = Field(default=60, gt=0)
 
-    # --- AI (интеграция позже) ---
+    # --- AI ---
     AI_PROVIDER: Literal["mock", "http"] = "mock"
     AI_BASE_URL: str = "http://localhost:8001"
     AI_TIMEOUT_S: int = Field(default=30, gt=0)
+    AI_MOCK_LATENCY_MS: int = Field(default=0, ge=0)  # имитация «думающей» модели на демо
     AI_HIGH_CONFIDENCE: float = Field(default=0.7, ge=0, le=1)
 
     # --- Клиника ---

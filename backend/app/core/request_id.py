@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import re
-from contextvars import ContextVar
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ulid import ULID
 
-REQUEST_ID_HEADER = "X-Request-ID"
+from app.core.context import request_id_ctx
 
-# Текущий request_id; читается JSON-форматтером логов.
-request_id_ctx: ContextVar[str | None] = ContextVar("request_id", default=None)
+REQUEST_ID_HEADER = "X-Request-ID"
 
 # Принимаем входящий id только «безопасного» вида, иначе генерируем свой.
 _VALID_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")

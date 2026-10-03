@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.ai.factory import build_ai_provider
 from app.api.v1.router import api_router
 from app.core.config import Settings, get_settings
 from app.core.errors import register_exception_handlers
@@ -68,8 +69,12 @@ def _docs_urls(settings: Settings) -> dict:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     app.state.store = build_store(settings)
-    # app.state.ai = build_ai_provider(settings)  — этап AI
-    yield
+    app.state.ai = build_ai_provider(settings)
+    logger.info("AI provider: %s", settings.AI_PROVIDER)
+    try:
+        yield
+    finally:
+        await app.state.ai.aclose()
 
 
 def create_app() -> FastAPI:
