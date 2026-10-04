@@ -76,12 +76,13 @@ def test_treating_doctor_can_decide_others_cannot():
     study = _study(doctor_id="usr_1")
     assert rules.can_decide(_user(Role.DOCTOR, "usr_1"), study)
     assert not rules.can_decide(_user(Role.DOCTOR, "usr_2"), study)
-    assert not rules.can_decide(_user(Role.HEAD, "usr_1"), study)
+    assert rules.can_decide(_user(Role.CHIEF, "usr_9"), study)
+    assert not rules.can_decide(_user(Role.MANAGER, "usr_1"), study)
 
 
-def test_head_can_analyze_but_patient_cannot_view():
+def test_chief_can_analyze_but_patient_cannot_view():
     study = _study()
-    assert rules.can_analyze(_user(Role.HEAD, "usr_9"), study)
+    assert rules.can_analyze(_user(Role.CHIEF, "usr_9"), study)
     assert not rules.can_analyze(_user(Role.DOCTOR, "usr_2"), study)
     assert not rules.can_view_study(_user(Role.PATIENT, "usr_3"), study)
 
@@ -91,9 +92,10 @@ def test_can_act_flag():
     assert rules.can_act(doctor, _study(S.DECIDED))
     assert not rules.can_act(doctor, _study(S.COMPLETED))
     assert not rules.can_act(other, _study(S.AI_READY))
-    head = _user(Role.HEAD, "usr_9")
-    assert rules.can_act(head, _study(S.NEW))  # может загрузить ответ AI вручную
-    assert not rules.can_act(head, _study(S.DECIDED))
+    chief = _user(Role.CHIEF, "usr_9")
+    assert rules.can_act(chief, _study(S.NEW))
+    assert not rules.can_act(chief, _study(S.COMPLETED))
+    assert not rules.can_act(_user(Role.MANAGER, "usr_8"), _study(S.NEW))
 
 
 def test_accepted_ai():

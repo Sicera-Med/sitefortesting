@@ -5,12 +5,13 @@ import {
   CalendarCheck,
   CalendarPlus,
   CalendarX,
+  Circle,
+  CircleCheck,
   ClipboardList,
   Loader2,
   Stethoscope,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 
 import { AppShell } from "@/components/app-shell";
 import { BookingPanel } from "@/components/patient/booking-panel";
@@ -37,7 +38,14 @@ import {
 } from "@/lib/api/hooks";
 import type { Appointment, PatientNotification } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth";
-import { channelsText, fmtDate, fmtDateTime, useDecisionItems, useLabels } from "@/lib/format";
+import {
+  channelsText,
+  fmtDate,
+  fmtDateTime,
+  useAppointmentTarget,
+  useLabels,
+  useRequirementLabel,
+} from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function PatientPage() {
@@ -68,10 +76,11 @@ function PatientCabinet() {
   }, [notifications.data, markRead]);
 
   const items = notifications.data ?? [];
-  // Сверху — где ещё нужна запись: нет ответа или нет действующей записи по уведомлению
+  // Сверху — где ещё нужна запись: не все направления закрыты записью
   const needsAction = (n: PatientNotification) =>
     n.notification.patient_action !== "declined" &&
-    !n.appointments.some((a) => a.status === "scheduled");
+    !!n.booking &&
+    n.booking.booked < n.booking.required;
   const sortedItems = [...items].sort((a, b) => Number(needsAction(b)) - Number(needsAction(a)));
 
   return (
@@ -131,18 +140,20 @@ function PatientCabinet() {
 
 function NotificationCard({ item }: { item: PatientNotification }) {
   const label = useLabels();
-  const recs = useDecisionItems()(item.recommendations, item.details);
+  const requirementLabel = useRequirementLabel();
+  const appointmentTarget = useAppointmentTarget();
   const decline = useDecline();
-  const [booking, setBooking] = useState(false);
+  const [bookingKey, setBookingKey] = useState<string | null>(null);
   const n = item.notification;
   const open = !n.patient_action;
-  const scheduled = item.appointments.filter((a) => a.status === "scheduled");
-  // По одному уведомлению можно записаться к нескольким врачам; после отказа — нельзя
+  // Записаться нужно по каждому направлению; после отказа — нельзя
   const canBook = n.patient_action !== "declined";
-  const highlight = canBook && !scheduled.length;
+  const progress = item.booking;
+  const done = !!progress && progress.booked === progress.required;
+  const cancelled = item.appointments.filter((a) => a.status === "cancelled");
 
   return (
-    <Card className={cn(highlight && "ring-2 ring-primary/30")}>
+    <Card className={cn(canBook && !done && "ring-2 ring-primary/30")}>
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
@@ -155,24 +166,15 @@ function NotificationCard({ item }: { item: PatientNotification }) {
             </p>
           </div>
           {open && <Badge>Новое</Badge>}
-          {scheduled.length > 0 && (
-            <Badge className="bg-emerald-100 text-emerald-800">Вы записаны</Badge>
-          )}
-          {n.patient_action === "booked" && !scheduled.length && (
-            <Badge variant="secondary">Запись отменена</Badge>
+          {canBook && progress && progress.booked > 0 && (
+            <Badge className={done ? "bg-emerald-100 text-emerald-800" : undefined}>
+              {done ? "Вы записаны" : `Записано ${progress.booked} из ${progress.required}`}
+            </Badge>
           )}
           {n.patient_action === "declined" && <Badge variant="secondary">Вы отказались</Badge>}
         </div>
       </CardHeader>
       <CardContent className="grid gap-4 text-sm">
-        <ul className="grid gap-1.5">
-          {recs.map((r) => (
-            <li key={r.type} className="rounded-xl bg-background px-3 py-2">
-              <span className="font-medium">{r.label}</span>
-              {r.text && <span className="text-muted-foreground"> — {r.text}</span>}
-            </li>
-          ))}
-        </ul>
         <div className="flex items-center gap-2 text-muted-foreground">
           <Stethoscope className="size-4" />
           Лечащий врач: {item.treating_doctor.full_name} (
@@ -187,58 +189,91 @@ function NotificationCard({ item }: { item: PatientNotification }) {
           <span className="font-medium text-foreground">{channelsText(n.channels)}:</span> {n.text}
         </p>
 
-        {item.appointments.map((a) => (
+        <div className="grid gap-2">
+          <h3 className="font-medium">
+            {canBook && !done ? "Запишитесь по каждому направлению" : "Направления врача"}
+          </h3>
+          {item.requirements.map((r) => (
+            <div key={r.key} className="grid gap-2">
+              <div
+                className={cn(
+                  "flex flex-wrap items-center justify-between gap-2 rounded-xl p-3",
+                  r.appointment_id ? "bg-emerald-50 text-emerald-900" : "bg-background",
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  {r.appointment_id ? (
+                    <CircleCheck className="size-4 shrink-0" />
+                  ) : (
+                    <Circle className="size-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <div>
+                    <div className="font-medium">{requirementLabel(r)}</div>
+                    {r.appointment_id && r.scheduled_for ? (
+                      <div className="text-xs">
+                        {r.doctor ? `${r.doctor.full_name}, ` : ""}
+                        {fmtDateTime(r.scheduled_for)}
+                      </div>
+                    ) : (
+                      r.kind === "treating" &&
+                      r.doctor && (
+                        <div className="text-xs text-muted-foreground">{r.doctor.full_name}</div>
+                      )
+                    )}
+                  </div>
+                </div>
+                {canBook && !r.appointment_id && bookingKey !== r.key && (
+                  <Button size="sm" onClick={() => setBookingKey(r.key)}>
+                    <CalendarPlus /> Записаться
+                  </Button>
+                )}
+              </div>
+              {canBook && bookingKey === r.key && (
+                <div className="rounded-2xl border bg-card p-4">
+                  <BookingPanel
+                    target={
+                      r.kind === "treating"
+                        ? { kind: "treating", doctor: item.treating_doctor }
+                        : { kind: r.kind, code: r.code! }
+                    }
+                    notificationId={n.id}
+                    requirement={r.key}
+                    onDone={() => setBookingKey(null)}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => setBookingKey(null)}
+                  >
+                    Отмена
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {cancelled.map((a) => (
           <div
             key={a.id}
-            className={cn(
-              "flex items-center gap-2 rounded-lg p-3",
-              a.status === "cancelled"
-                ? "bg-background text-muted-foreground line-through"
-                : "bg-emerald-50 text-emerald-900",
-            )}
+            className="flex items-center gap-2 rounded-lg bg-background p-3 text-muted-foreground"
           >
-            <CalendarCheck className="size-4 shrink-0" />
-            {a.doctor.full_name} ({label("specialists", a.doctor.specialty)}),{" "}
-            {fmtDateTime(a.scheduled_for)}
+            <CalendarX className="size-4 shrink-0" />
+            <span className="line-through">
+              {appointmentTarget(a)}, {fmtDateTime(a.scheduled_for)}
+            </span>
+            <span className="text-xs">отменена</span>
           </div>
         ))}
 
-        {canBook && !booking && (
-          <div className="flex flex-wrap justify-end gap-2">
-            {open && (
-              <DeclineButton
-                pending={decline.isPending}
-                onConfirm={() =>
-                  decline.mutate(n.id, {
-                    onSuccess: () => toast("Вы отказались от рекомендации"),
-                    onError: (err) => toast.error(errorMessage(err)),
-                  })
-                }
-              />
-            )}
-            <Button
-              variant={item.appointments.length ? "outline" : "default"}
-              onClick={() => setBooking(true)}
-            >
-              <CalendarPlus />{" "}
-              {item.appointments.length ? "Записаться ещё к врачу" : "Записаться на приём"}
-            </Button>
+        {open && (
+          <div className="flex justify-end">
+            <DeclineButton pending={decline.isPending} onConfirm={() => decline.mutate(n.id)} />
           </div>
         )}
-
-        {canBook && booking && (
-          <div className="rounded-2xl border bg-card p-4">
-            <BookingPanel
-              notificationId={n.id}
-              suggested={item.suggested_doctors}
-              suggestedSpecialties={item.suggested_specialties}
-              lockedDoctor={item.only_treating_doctor ? item.treating_doctor : undefined}
-              onDone={() => setBooking(false)}
-            />
-            <Button variant="ghost" size="sm" className="mt-2" onClick={() => setBooking(false)}>
-              Отмена
-            </Button>
-          </div>
+        {decline.isError && (
+          <p className="text-right text-sm text-destructive">{errorMessage(decline.error)}</p>
         )}
       </CardContent>
     </Card>
@@ -279,7 +314,7 @@ function DeclineButton({ pending, onConfirm }: { pending: boolean; onConfirm: ()
 }
 
 function AppointmentsList({ items, loading }: { items?: Appointment[]; loading: boolean }) {
-  const label = useLabels();
+  const target = useAppointmentTarget();
   const cancel = useCancelAppointment();
   const [now] = useState(() => Date.now()); // «прошла» — относительно открытия страницы
   const [showCancelled, setShowCancelled] = useState(false);
@@ -339,9 +374,7 @@ function AppointmentsList({ items, loading }: { items?: Appointment[]; loading: 
                     <div className={cn("font-medium", cancelled && "line-through")}>
                       {fmtDateTime(a.scheduled_for)}
                     </div>
-                    <div className="text-xs">
-                      {a.doctor.full_name}, {label("specialists", a.doctor.specialty)}
-                    </div>
+                    <div className="text-xs">{target(a)}</div>
                   </div>
                 </div>
                 {cancelled ? (
@@ -349,22 +382,22 @@ function AppointmentsList({ items, loading }: { items?: Appointment[]; loading: 
                 ) : past ? (
                   <Badge variant="outline">Прошла</Badge>
                 ) : (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={cancel.isPending}
-                    onClick={() =>
-                      cancel.mutate(a.id, {
-                        onSuccess: () => toast("Запись отменена"),
-                        onError: (err) => toast.error(errorMessage(err)),
-                      })
-                    }
-                  >
-                    {cancel.isPending && cancel.variables === a.id && (
-                      <Loader2 className="animate-spin" />
+                  <span className="flex items-center gap-2">
+                    {cancel.isError && cancel.variables === a.id && (
+                      <span className="text-xs text-destructive">{errorMessage(cancel.error)}</span>
                     )}
-                    Отменить
-                  </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={cancel.isPending}
+                      onClick={() => cancel.mutate(a.id)}
+                    >
+                      {cancel.isPending && cancel.variables === a.id && (
+                        <Loader2 className="animate-spin" />
+                      )}
+                      Отменить
+                    </Button>
+                  </span>
                 )}
               </div>
             );

@@ -23,49 +23,62 @@ def _my_notification(client, headers):
 def test_patient_books_from_notification(client, kuznetsova, petrov):
     item = _my_notification(client, kuznetsova)
     assert item["notification"]["patient_action"] is None
-    # Петров назначил и контрольный приём, и консультацию пульмонолога
+    # Петров назначил и контрольный приём, и консультацию пульмонолога — два направления
     assert item["recommendations"] == ["repeat_appointment", "specialist_consult"]
-    assert item["suggested_specialties"] == ["pulmonologist"]
-    assert item["only_treating_doctor"] is False
-    names = [d["full_name"] for d in item["suggested_doctors"]]
-    assert names[0].startswith("Петров") and any(n.startswith("Сидорова") for n in names[1:])
+    keys = [r["key"] for r in item["requirements"]]
+    assert keys == ["treating", "specialist:pulmonologist"]
+    assert item["requirements"][0]["doctor"]["full_name"].startswith("Петров")
+    assert item["booking"] == {"booked": 0, "required": 2}
     assert "report_text" not in item["study"]  # заключение пациенту не показываем
 
     nid = item["notification"]["id"]
     read = client.post(f"{API}/notifications/{nid}/read", headers=kuznetsova).json()
     assert read["notification"]["status"] == "read"
 
-    def book(doctor_id, nth=0):
+    def book(doctor_id, requirement, nth=0):
         days = client.get(f"{API}/doctors/{doctor_id}/slots", headers=kuznetsova).json()
         slot = days[0]["slots"][nth]
         return client.post(
             f"{API}/appointments",
             headers=kuznetsova,
-            json={"doctor_id": doctor_id, "scheduled_for": slot, "notification_id": nid},
+            json={
+                "doctor_id": doctor_id,
+                "scheduled_for": slot,
+                "notification_id": nid,
+                "requirement": requirement,
+            },
         )
 
-    sidorova_id = next(
-        d["id"] for d in item["suggested_doctors"] if d["specialty"] == "pulmonologist"
-    )
-    r = book(sidorova_id)
+    pulmonologists = client.get(
+        f"{API}/doctors", params={"specialty": "pulmonologist"}, headers=kuznetsova
+    ).json()
+    sidorova_id = pulmonologists[0]["id"]
+    r = book(sidorova_id, "specialist:pulmonologist")
     assert r.status_code == 200, r.text
     first = r.json()
-    assert book(sidorova_id).status_code == 409  # к тому же врачу второй раз нельзя
+    assert first["requirement"] == "specialist:pulmonologist"
+    # направление уже закрыто — второй раз нельзя
+    assert book(sidorova_id, "specialist:pulmonologist", nth=1).status_code == 409
 
-    # по тому же уведомлению — ещё и контрольный приём у лечащего врача
+    # Кейс открыт, пока не закрыто второе направление
+    study_id = item["study"]["id"]
+    card = client.get(f"{API}/studies/{study_id}", headers=petrov).json()
+    assert card["status"] == "notified"
+    assert _my_notification(client, kuznetsova)["booking"] == {"booked": 1, "required": 2}
+
+    # отказаться после записи нельзя
+    assert client.post(f"{API}/notifications/{nid}/decline", headers=kuznetsova).status_code == 409
+
     petrov_id = item["treating_doctor"]["id"]
-    r = book(petrov_id, nth=1)  # другое время — две записи на одно время нельзя
+    r = book(petrov_id, "treating", nth=1)  # другое время — две записи на одно время нельзя
     assert r.status_code == 200, r.text
     second = r.json()
 
     view = _my_notification(client, kuznetsova)
     assert {a["id"] for a in view["appointments"]} == {first["id"], second["id"]}
+    assert view["booking"] == {"booked": 2, "required": 2}
 
-    # отказаться после записи нельзя
-    assert client.post(f"{API}/notifications/{nid}/decline", headers=kuznetsova).status_code == 409
-
-    # Study завершено после первой записи, все записи видны в карточке
-    study_id = item["study"]["id"]
+    # Закрыты все направления — кейс завершён
     card = client.get(f"{API}/studies/{study_id}", headers=petrov).json()
     assert card["status"] == "completed"
     assert {a["id"] for a in card["appointments"]} == {first["id"], second["id"]}
@@ -74,10 +87,19 @@ def test_patient_books_from_notification(client, kuznetsova, petrov):
     ]
     assert actions[-3:] == ["notification.read", "patient.booked", "patient.booked"]
 
-    # запись видна у врача-консультанта
+    # запись видна у врача-консультанта, со ссылкой на исследование
     sidorova = login(client, "sidorova@clinic.demo")
     mine = client.get(f"{API}/appointments", headers=sidorova).json()
-    assert first["id"] in {a["id"] for a in mine}
+    booked = next(a for a in mine if a["id"] == first["id"])
+    assert booked["study_id"] == study_id
+
+    # Отмена одной записи снова открывает кейс
+    r = client.patch(
+        f"{API}/appointments/{second['id']}", headers=kuznetsova, json={"status": "cancelled"}
+    )
+    assert r.status_code == 200
+    card = client.get(f"{API}/studies/{study_id}", headers=petrov).json()
+    assert card["status"] == "notified"
 
 
 def test_patient_declines(client, kuznetsova):
@@ -88,7 +110,7 @@ def test_patient_declines(client, kuznetsova):
 
 
 def test_slot_conflicts_and_validation(client, kuznetsova):
-    doctor = _my_notification(client, kuznetsova)["suggested_doctors"][0]
+    doctor = _my_notification(client, kuznetsova)["treating_doctor"]
     slot = _first_free_slot(client, kuznetsova, doctor["id"])
     body = {"doctor_id": doctor["id"], "scheduled_for": slot}
     assert client.post(f"{API}/appointments", headers=kuznetsova, json=body).status_code == 200
@@ -119,7 +141,7 @@ def test_foreign_notification_is_hidden(client, kuznetsova):
 
 def test_cancel_appointment(client, kuznetsova):
     appointments = client.get(f"{API}/appointments", headers=kuznetsova).json()
-    doctor = _my_notification(client, kuznetsova)["suggested_doctors"][0]
+    doctor = _my_notification(client, kuznetsova)["treating_doctor"]
     slot = _first_free_slot(client, kuznetsova, doctor["id"])
     created = client.post(
         f"{API}/appointments",
@@ -144,7 +166,7 @@ def test_cancel_appointment(client, kuznetsova):
 def test_rebook_by_notification_after_cancel(client, kuznetsova):
     item = _my_notification(client, kuznetsova)
     nid = item["notification"]["id"]
-    doctor = item["suggested_doctors"][0]
+    doctor = item["treating_doctor"]
     days = client.get(f"{API}/doctors/{doctor['id']}/slots", headers=kuznetsova).json()
     first, second = days[0]["slots"][:2]
 
@@ -152,11 +174,16 @@ def test_rebook_by_notification_after_cancel(client, kuznetsova):
         return client.post(
             f"{API}/appointments",
             headers=kuznetsova,
-            json={"doctor_id": doctor["id"], "scheduled_for": slot, "notification_id": nid},
+            json={
+                "doctor_id": doctor["id"],
+                "scheduled_for": slot,
+                "notification_id": nid,
+                "requirement": "treating",
+            },
         )
 
     aid = book(first).json()["id"]
-    assert book(second).status_code == 409  # запись активна — второй раз нельзя
+    assert book(second).status_code == 409  # направление закрыто — второй раз нельзя
     client.patch(f"{API}/appointments/{aid}", headers=kuznetsova, json={"status": "cancelled"})
     r = book(second)
     assert r.status_code == 200, r.text
@@ -180,6 +207,73 @@ def test_doctors_filter(client, petrov):
         f"{API}/doctors", params={"specialty": "neurosurgeon"}, headers=petrov
     ).json()
     assert [d["full_name"] for d in items] == ["Захаров Игорь Валентинович"]
+
+
+def test_research_booking_and_partial_seed(client, chief):
+    """Иванов (seed) записан к пульмонологу, на КТ — нет: кейс открыт, 1 из 2."""
+    ivanov = login(client, "ivanov@patient.demo")
+    item = _my_notification(client, ivanov)
+    assert item["booking"] == {"booked": 1, "required": 2}
+    ct = next(r for r in item["requirements"] if r["key"] == "research:ct")
+    assert ct["appointment_id"] is None
+    study_id = item["study"]["id"]
+    assert client.get(f"{API}/studies/{study_id}", headers=chief).json()["status"] == "notified"
+
+    days = client.get(f"{API}/research/ct/slots", headers=ivanov).json()
+    body = {
+        "research_type": "ct",
+        "scheduled_for": days[0]["slots"][0],
+        "notification_id": item["notification"]["id"],
+    }
+    # без направления и к врачу на исследование — нельзя
+    r = client.post(f"{API}/appointments", headers=ivanov, json=body)
+    assert r.status_code == 422
+    r = client.post(
+        f"{API}/appointments", headers=ivanov, json={**body, "requirement": "research:mri"}
+    )
+    assert r.status_code == 422
+    r = client.post(
+        f"{API}/appointments", headers=ivanov, json={**body, "requirement": "research:ct"}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["doctor"] is None and r.json()["research_type"] == "ct"
+
+    card = client.get(f"{API}/studies/{study_id}", headers=chief).json()
+    assert card["status"] == "completed"
+    assert {r["key"] for r in card["requirements"] if r["appointment_id"]} == {
+        "specialist:pulmonologist",
+        "research:ct",
+    }
+    # слот кабинета занят
+    days_after = client.get(f"{API}/research/ct/slots", headers=ivanov).json()
+    assert body["scheduled_for"] not in days_after[0]["slots"]
+
+
+def test_wrong_specialist_for_requirement(client, kuznetsova):
+    item = _my_notification(client, kuznetsova)
+    neuro = client.get(f"{API}/doctors", params={"specialty": "neurologist"}, headers=kuznetsova)
+    doctor = neuro.json()[0]
+    r = client.post(
+        f"{API}/appointments",
+        headers=kuznetsova,
+        json={
+            "doctor_id": doctor["id"],
+            "scheduled_for": _first_free_slot(client, kuznetsova, doctor["id"]),
+            "notification_id": item["notification"]["id"],
+            "requirement": "specialist:pulmonologist",
+        },
+    )
+    assert r.status_code == 422
+
+
+def test_research_without_notification_is_rejected(client, kuznetsova):
+    days = client.get(f"{API}/research/ct/slots", headers=kuznetsova).json()
+    r = client.post(
+        f"{API}/appointments",
+        headers=kuznetsova,
+        json={"research_type": "ct", "scheduled_for": days[0]["slots"][0]},
+    )
+    assert r.status_code == 422
 
 
 # --- Уведомление после решения ---
@@ -236,8 +330,8 @@ def test_repeat_appointment_only_with_treating_doctor(client, petrov):
         for x in client.get(f"{API}/patients/me/notifications", headers=patient).json()
         if x["notification"]["id"] == n["id"]
     )
-    assert view["only_treating_doctor"] is True
-    assert [d["id"] for d in view["suggested_doctors"]] == [item["doctor"]["id"]]
+    assert [r["key"] for r in view["requirements"]] == ["treating"]
+    assert view["requirements"][0]["doctor"]["id"] == item["doctor"]["id"]
 
     doctors = client.get(f"{API}/doctors", headers=patient).json()
     other = next(d for d in doctors if d["id"] != item["doctor"]["id"])
@@ -245,7 +339,12 @@ def test_repeat_appointment_only_with_treating_doctor(client, petrov):
     r = client.post(
         f"{API}/appointments",
         headers=patient,
-        json={"doctor_id": other["id"], "scheduled_for": slot, "notification_id": n["id"]},
+        json={
+            "doctor_id": other["id"],
+            "scheduled_for": slot,
+            "notification_id": n["id"],
+            "requirement": "treating",
+        },
     )
     assert r.status_code == 422
 
@@ -253,9 +352,16 @@ def test_repeat_appointment_only_with_treating_doctor(client, petrov):
     r = client.post(
         f"{API}/appointments",
         headers=patient,
-        json={"doctor_id": item["doctor"]["id"], "scheduled_for": slot, "notification_id": n["id"]},
+        json={
+            "doctor_id": item["doctor"]["id"],
+            "scheduled_for": slot,
+            "notification_id": n["id"],
+            "requirement": "treating",
+        },
     )
     assert r.status_code == 200, r.text
+    card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
+    assert card["status"] == "completed"  # единственное направление закрыто
 
 
 def test_details_match_with_ai(client, petrov):
@@ -300,8 +406,8 @@ def test_additional_research_validation(client, sidorova):
 # --- Метрики ---
 
 
-def test_dashboard_from_seed(client, head):
-    d = client.get(f"{API}/metrics/dashboard", headers=head).json()
+def test_dashboard_from_seed(client, manager):
+    d = client.get(f"{API}/metrics/dashboard", headers=manager).json()
     # В seed нет ответов AI — согласия пока не с чем считать
     assert d["agreement"] == {"agreed": 0, "total": 0, "rate": None}
     assert d["details_agreement"]["total"] == 0
@@ -315,9 +421,9 @@ def test_dashboard_from_seed(client, head):
     assert consult["sent"] == 4 and consult["booked"] == 1
 
 
-def test_dashboard_updates_after_ai_and_decision(client, head, petrov):
+def test_dashboard_updates_after_ai_and_decision(client, manager, petrov):
     analyze_all(client)
-    d = client.get(f"{API}/metrics/dashboard", headers=head).json()
+    d = client.get(f"{API}/metrics/dashboard", headers=manager).json()
     assert d["latency"]["count"] == 9  # 9 исследований без решения проанализированы
 
     item = client.get(f"{API}/studies", params={"status": "ai_ready"}, headers=petrov).json()[0]
@@ -330,10 +436,27 @@ def test_dashboard_updates_after_ai_and_decision(client, head, petrov):
         json={"chosen_types": [other], "details": details},
     )
     assert r.status_code == 200
-    d = client.get(f"{API}/metrics/dashboard", headers=head).json()
+    d = client.get(f"{API}/metrics/dashboard", headers=manager).json()
     assert d["agreement"] == {"agreed": 0, "total": 1, "rate": 0.0}
     assert sum(map(sum, d["confusion_matrix"]["matrix"])) == 1
 
 
-def test_dashboard_head_only(client, petrov):
+def test_dashboard_manager_only(client, petrov, chief):
     assert client.get(f"{API}/metrics/dashboard", headers=petrov).status_code == 403
+    assert client.get(f"{API}/metrics/dashboard", headers=chief).status_code == 403
+
+
+def test_schedule_access(client, petrov, chief, manager):
+    doctors = client.get(f"{API}/doctors", headers=petrov).json()
+    orlov = next(d for d in doctors if d["full_name"].startswith("Орлов"))
+    # Врач — только своё расписание
+    assert client.get(f"{API}/appointments", headers=petrov).status_code == 200
+    r = client.get(f"{API}/appointments", params={"doctor_id": orlov["id"]}, headers=petrov)
+    assert r.status_code == 403
+    # Главврач — любого врача; в seed к Орлову записана Морозова по направлению
+    items = client.get(
+        f"{API}/appointments", params={"doctor_id": orlov["id"]}, headers=chief
+    ).json()
+    assert items and all(a["doctor"]["id"] == orlov["id"] for a in items)
+    assert any(a["study_id"] for a in items)
+    assert client.get(f"{API}/appointments", headers=manager).status_code == 403

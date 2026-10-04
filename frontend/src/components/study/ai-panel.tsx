@@ -2,7 +2,6 @@
 
 import { AlertTriangle, Bot, FileJson, Loader2 } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 
 import { confidenceTone } from "@/components/study-badges";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -215,7 +214,6 @@ function UploadDialog({
     setParseError(null);
     upload.mutate(payload, {
       onSuccess: () => {
-        toast.success("Ответ AI загружен");
         onOpenChange(false);
         setText("");
       },

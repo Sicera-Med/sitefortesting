@@ -2,7 +2,8 @@ from enum import StrEnum
 
 
 class Role(StrEnum):
-    HEAD = "head"
+    CHIEF = "chief"  # главврач: решает по любым пациентам, управляет врачами
+    MANAGER = "manager"  # менеджер: только метрики
     DOCTOR = "doctor"
     PATIENT = "patient"
 

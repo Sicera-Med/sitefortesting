@@ -22,7 +22,8 @@ def store() -> Store:
 
 def test_counts(store):
     roles = Counter(u.role for u in store.users.values())
-    assert roles[Role.HEAD] == 1
+    assert roles[Role.CHIEF] == 1
+    assert roles[Role.MANAGER] == 1
     assert roles[Role.DOCTOR] == 7
     assert roles[Role.PATIENT] == 10
     assert len(store.studies) == 15
@@ -54,10 +55,10 @@ def test_status_consistency(store):
 
         assert (decision is None) == (study.status is S.NEW)
         assert (notification is None) == (study.status not in {S.NOTIFIED, S.COMPLETED})
-        if study.status is S.COMPLETED:
-            assert notification.patient_action is not None
-        if study.status is S.NOTIFIED:
-            assert notification.patient_action is None
+        if notification:
+            # Завершено ⇔ записи есть по всем направлениям решения
+            appointments = store.list_appointments(notification_id=notification.id)
+            assert (study.status is S.COMPLETED) == rules.all_covered(decision, appointments)
 
 
 def test_seed_decisions_are_without_ai(store):
@@ -77,8 +78,9 @@ def test_appointments_are_bookable_slots_without_conflicts(store):
     for a in store.list_appointments(status=AppointmentStatus.SCHEDULED):
         assert a.scheduled_for > NOW
         assert is_work_slot(a.scheduled_for, tz)
-        assert (a.doctor_id, a.scheduled_for) not in seen
-        seen.add((a.doctor_id, a.scheduled_for))
+        resource = a.doctor_id or a.research_type
+        assert (resource, a.scheduled_for) not in seen
+        seen.add((resource, a.scheduled_for))
 
 
 def test_live_demo_patient_has_unanswered_notification(store):
@@ -87,8 +89,9 @@ def test_live_demo_patient_has_unanswered_notification(store):
     [notification] = store.notifications_for_patient(patient.id)
     assert notification.patient_action is None
     decision = store.get_decision(notification.decision_id)
-    for specialty in rules.suggested_specialties(decision):
-        assert store.list_doctors(specialty)  # есть к кому записаться
+    for req in rules.required_bookings(decision):
+        if req.kind == "specialist":
+            assert store.list_doctors(req.code)  # есть к кому записаться
 
 
 def test_every_study_has_audit_trail(store):

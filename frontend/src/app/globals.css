@@ -129,3 +129,25 @@
     @apply font-sans;
   }
 }
+/* Подсветка панели уведомления сразу после решения врача */
+@keyframes notify-sent {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px);
+    box-shadow: 0 0 0 3px var(--primary);
+  }
+  15% {
+    opacity: 1;
+    transform: none;
+  }
+  70% {
+    box-shadow: 0 0 0 3px var(--primary);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
+@utility animate-notify-sent {
+  animation: notify-sent 2.5s ease-out;
+}

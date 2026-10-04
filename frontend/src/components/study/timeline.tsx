@@ -8,6 +8,7 @@ import { fmtDateTime } from "@/lib/format";
 
 const ACTION_LABELS: Record<string, string> = {
   "study.created": "Исследование создано",
+  "study.reassigned": "Сменился лечащий врач",
   "ai.analyzed": "Анализ AI",
   "ai.reanalyzed": "Повторный анализ AI",
   "ai.failed": "Ошибка AI",

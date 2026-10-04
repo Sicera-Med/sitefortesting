@@ -48,8 +48,13 @@ def sidorova(client: TestClient) -> dict[str, str]:
 
 
 @pytest.fixture
-def head(client: TestClient) -> dict[str, str]:
-    return login(client, "head@clinic.demo")
+def chief(client: TestClient) -> dict[str, str]:
+    return login(client, "chief@clinic.demo")
+
+
+@pytest.fixture
+def manager(client: TestClient) -> dict[str, str]:
+    return login(client, "manager@clinic.demo")
 
 
 @pytest.fixture

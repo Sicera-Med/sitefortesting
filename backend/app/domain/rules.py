@@ -5,16 +5,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from app.domain.enums import (
+    AppointmentStatus,
     NotificationChannel,
     RecommendationType,
     Role,
     StudyStatus,
 )
-from app.domain.models import Decision, Notification, Patient, Study, User
+from app.domain.models import Appointment, Decision, Notification, Patient, Study, User
 
 S = StudyStatus
 
@@ -27,7 +29,8 @@ TRANSITIONS: Mapping[StudyStatus, frozenset[StudyStatus]] = {
     S.AI_FAILED: frozenset({S.AI_READY, S.AI_FAILED, S.DECIDED}),
     S.DECIDED: frozenset({S.NOTIFIED}),
     S.NOTIFIED: frozenset({S.COMPLETED}),
-    S.COMPLETED: frozenset(),
+    # Пациент отменил одну из записей — направление снова не закрыто
+    S.COMPLETED: frozenset({S.NOTIFIED}),
 }
 
 ANALYZABLE_STATUSES = frozenset({S.NEW, S.AI_READY, S.AI_FAILED})
@@ -42,26 +45,30 @@ def is_treating_doctor(user: User, study: Study) -> bool:
     return user.role is Role.DOCTOR and user.id == study.treating_doctor_id
 
 
+STAFF_ROLES = frozenset({Role.DOCTOR, Role.CHIEF, Role.MANAGER})
+
+
 def can_view_study(user: User, study: Study) -> bool:
-    # Врачи видят любые Study (чужие — read-only), head — все, пациент — никакие
-    return user.role in (Role.DOCTOR, Role.HEAD)
+    # Врачи видят любые Study (чужие — read-only), главврач и менеджер — все, пациент — никакие
+    return user.role in STAFF_ROLES
+
+
+def is_responsible(user: User, study: Study) -> bool:
+    """Лечащий врач или главврач — тот, кто может решать по исследованию."""
+    return user.role is Role.CHIEF or is_treating_doctor(user, study)
 
 
 def can_analyze(user: User, study: Study) -> bool:
-    return user.role is Role.HEAD or is_treating_doctor(user, study)
+    return is_responsible(user, study)
 
 
 def can_decide(user: User, study: Study) -> bool:
-    return is_treating_doctor(user, study)
+    return is_responsible(user, study)
 
 
 def can_act(user: User, study: Study) -> bool:
     """Флаг для UI: может ли пользователь что-то делать со Study прямо сейчас."""
-    if study.status is S.COMPLETED:
-        return False
-    if is_treating_doctor(user, study):
-        return True
-    return can_analyze(user, study) and study.status in ANALYZABLE_STATUSES
+    return study.status is not S.COMPLETED and is_responsible(user, study)
 
 
 def compute_accepted_ai(
@@ -101,8 +108,8 @@ DETAILS_KEY: Mapping[RecommendationType, str] = {
 }
 
 
-def contact_channels(patient: Patient, user: User | None) -> tuple[NotificationChannel, ...]:
-    """Все каналы, для которых у пациента есть контакт."""
+def available_channels(patient: Patient, user: User | None) -> tuple[NotificationChannel, ...]:
+    """Каналы, для которых у пациента есть контакт."""
     channels: list[NotificationChannel] = []
     if patient.phone:
         channels.append(NotificationChannel.SMS)
@@ -111,6 +118,11 @@ def contact_channels(patient: Patient, user: User | None) -> tuple[NotificationC
     if patient.social:
         channels.append(NotificationChannel.SOCIAL)
     return tuple(channels)
+
+
+def contact_channels(patient: Patient, user: User | None) -> tuple[NotificationChannel, ...]:
+    """Куда уходит уведомление: доступные контакты, которые пациент не выключил."""
+    return tuple(c for c in available_channels(patient, user) if c in patient.notify_channels)
 
 
 def is_patient_self(user: User, patient: Patient) -> bool:
@@ -122,21 +134,58 @@ def can_respond_to_notification(notification: Notification) -> bool:
     return notification.patient_action is None
 
 
-def only_treating_doctor(decision: Decision) -> bool:
-    """Только повторный приём — записаться по уведомлению можно лишь к лечащему врачу."""
-    return set(decision.chosen_types) == {RecommendationType.REPEAT_APPOINTMENT}
+# --- Направления, на которые пациент должен записаться ---
+
+RequirementKind = Literal["treating", "specialist", "research"]
 
 
-def needs_treating_doctor(decision: Decision) -> bool:
-    """Повторный приём и доп. обследование назначает/проводит лечащий врач."""
-    return bool(
-        {RecommendationType.REPEAT_APPOINTMENT, RecommendationType.ADDITIONAL_RESEARCH}
-        & set(decision.chosen_types)
-    )
+@dataclass(frozen=True, slots=True)
+class Requirement:
+    """Одно направление из решения врача: повторный приём, специалист или исследование."""
+
+    kind: RequirementKind
+    code: str | None = None  # специальность или вид исследования; у повторного приёма — None
+
+    @property
+    def key(self) -> str:
+        return self.kind if self.code is None else f"{self.kind}:{self.code}"
 
 
-def suggested_specialties(decision: Decision) -> list[str]:
-    """Специальности, к которым врач направил на консультацию."""
-    if RecommendationType.SPECIALIST_CONSULT not in decision.chosen_types:
-        return []
-    return list(decision.details.get("specialists", []))
+def required_bookings(decision: Decision) -> list[Requirement]:
+    """Куда пациенту записаться: кейс закрыт, только когда покрыто всё."""
+    chosen = decision.chosen_types
+    result: list[Requirement] = []
+    if RecommendationType.REPEAT_APPOINTMENT in chosen:
+        result.append(Requirement("treating"))
+    if RecommendationType.SPECIALIST_CONSULT in chosen:
+        result += [Requirement("specialist", c) for c in decision.details.get("specialists", [])]
+    if RecommendationType.ADDITIONAL_RESEARCH in chosen:
+        result += [Requirement("research", c) for c in decision.details.get("research_types", [])]
+    return result
+
+
+def covered_keys(appointments: Iterable[Appointment]) -> set[str]:
+    return {
+        a.requirement
+        for a in appointments
+        if a.requirement and a.status is AppointmentStatus.SCHEDULED
+    }
+
+
+def all_covered(decision: Decision, appointments: Iterable[Appointment]) -> bool:
+    covered = covered_keys(appointments)
+    return all(r.key in covered for r in required_bookings(decision))
+
+
+def fits_requirement(
+    req: Requirement, study: Study, doctor: User | None, research_type: str | None
+) -> bool:
+    """Подходит ли запись (врач или кабинет) под направление."""
+    match req.kind:
+        case "treating":
+            return doctor is not None and doctor.id == study.treating_doctor_id
+        case "specialist":
+            return doctor is not None and doctor.specialty == req.code
+        case "research":
+            return doctor is None and research_type == req.code
+    return False

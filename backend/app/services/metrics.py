@@ -6,8 +6,9 @@ import math
 from collections import Counter
 from typing import Any
 
+from app.domain import rules
 from app.domain.enums import AISource, PatientActionType, RecommendationType, StudyStatus
-from app.domain.models import Decision
+from app.domain.models import Decision, Notification
 from app.store import Store
 
 
@@ -92,7 +93,13 @@ class MetricsService:
 
     def _by_doctor(self, decisions: list[Decision]) -> list[dict[str, Any]]:
         rows = []
-        for doctor in self.store.list_doctors():
+        # Врачи и все, кто ещё принимал решения (главврач)
+        authors = self.store.list_doctors()
+        for d in decisions:
+            user = self.store.get_user(d.doctor_id)
+            if user not in authors:
+                authors.append(user)
+        for doctor in authors:
             own = [d for d in decisions if d.doctor_id == doctor.id]
             if not own:
                 continue
@@ -117,19 +124,26 @@ class MetricsService:
                 for n in self.store.list_notifications()
                 if kind in self.store.get_decision(n.decision_id).chosen_types
             ]
-            actions = Counter(n.patient_action for n in sent)
-            booked = actions.get(PatientActionType.BOOKED, 0)
+            # Записался = закрыл записью все направления решения; частично — ещё ждём
+            booked = sum(self._fully_booked(n) for n in sent)
+            declined = sum(n.patient_action is PatientActionType.DECLINED for n in sent)
             rows.append(
                 {
                     "recommendation": str(kind),
                     "sent": len(sent),
                     "booked": booked,
-                    "declined": actions.get(PatientActionType.DECLINED, 0),
-                    "pending": actions.get(None, 0),
+                    "declined": declined,
+                    "pending": len(sent) - booked - declined,
                     "booked_rate": round(booked / len(sent), 4) if sent else None,
                 }
             )
         return rows
+
+    def _fully_booked(self, n: Notification) -> bool:
+        if n.patient_action is not PatientActionType.BOOKED:
+            return False
+        decision = self.store.get_decision(n.decision_id)
+        return rules.all_covered(decision, self.store.list_appointments(notification_id=n.id))
 
     def _decision_row(self, d: Decision) -> dict[str, Any]:
         study = self.store.get_study(d.study_id)

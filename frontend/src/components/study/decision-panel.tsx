@@ -2,7 +2,6 @@
 
 import { Bot, Check, ClipboardCheck, Loader2, X } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 
 import { AgreementBadge } from "@/components/study-badges";
 import { Badge } from "@/components/ui/badge";
@@ -84,21 +83,7 @@ function DecisionForm({ study }: { study: StudyCard }) {
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    decide.mutate(
-      { chosen_types: types, details, comment: comment.trim() || null },
-      {
-        onSuccess: (d) =>
-          toast.success(
-            d.accepted_ai == null
-              ? "Решение сохранено"
-              : d.accepted_ai
-                ? "Решение сохранено: согласен с AI"
-                : "Решение сохранено: не согласен с AI",
-            { description: "Пациент уведомлён по всем доступным контактам" },
-          ),
-        onError: (err) => toast.error(errorMessage(err)),
-      },
-    );
+    decide.mutate({ chosen_types: types, details, comment: comment.trim() || null });
   }
 
   return (
@@ -195,6 +180,9 @@ function DecisionForm({ study }: { study: StudyCard }) {
               Сохранить решение
             </Button>
           </div>
+          {decide.isError && (
+            <p className="text-sm text-destructive">{errorMessage(decide.error)}</p>
+          )}
         </form>
       </CardContent>
     </Card>

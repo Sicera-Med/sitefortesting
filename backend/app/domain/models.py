@@ -31,8 +31,9 @@ class User:
     email: str
     password_hash: str
     full_name: str
-    # Профиль врача упрощён до одного поля (у head — None)
+    # Профиль врача упрощён до одного поля (у главврача и менеджера — None)
     specialty: str | None = None
+    active: bool = True  # главврач может отключить доступ врача
 
 
 @dataclass(slots=True, kw_only=True)
@@ -44,6 +45,8 @@ class Patient:
     sex: Sex
     phone: str
     social: str | None = None  # аккаунт в соцсети/мессенджере, если пациент его указал
+    # Каналы, в которые пациент разрешил уведомления (кабинет на сайте — всегда)
+    notify_channels: frozenset[NotificationChannel] = frozenset(NotificationChannel)
 
     def age_on(self, day: date) -> int:
         before_birthday = (day.month, day.day) < (self.birth_date.month, self.birth_date.day)
@@ -133,13 +136,18 @@ class Notification:
 
 @dataclass(slots=True, kw_only=True)
 class Appointment:
+    """Запись к врачу (doctor_id) или на исследование в кабинет (research_type) — одно из двух."""
+
     id: str
     patient_id: str
-    doctor_id: str
+    doctor_id: str | None
     scheduled_for: datetime
     status: AppointmentStatus
     created_at: datetime
     notification_id: str | None = None
+    research_type: str | None = None
+    # Какое направление из решения врача закрывает запись (rules.Requirement.key)
+    requirement: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -9,11 +9,13 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ForbiddenError, UnauthorizedError
 from app.domain.enums import Role
 from app.domain.models import User
+from app.services.account import AccountService
 from app.services.ai_service import AIService
 from app.services.appointments import AppointmentService
 from app.services.auth import AuthService
 from app.services.metrics import MetricsService
 from app.services.notifications import NotificationService
+from app.services.staff import StaffService
 from app.services.studies import StudyService
 from app.store import Store
 
@@ -60,12 +62,22 @@ def get_metrics_service(store: StoreDep, settings: SettingsDep) -> MetricsServic
     return MetricsService(store, high_confidence=settings.AI_HIGH_CONFIDENCE)
 
 
+def get_staff_service(store: StoreDep) -> StaffService:
+    return StaffService(store)
+
+
+def get_account_service(store: StoreDep) -> AccountService:
+    return AccountService(store)
+
+
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 AIServiceDep = Annotated[AIService, Depends(get_ai_service)]
 StudyServiceDep = Annotated[StudyService, Depends(get_study_service)]
 NotificationServiceDep = Annotated[NotificationService, Depends(get_notification_service)]
 AppointmentServiceDep = Annotated[AppointmentService, Depends(get_appointment_service)]
 MetricsServiceDep = Annotated[MetricsService, Depends(get_metrics_service)]
+StaffServiceDep = Annotated[StaffService, Depends(get_staff_service)]
+AccountServiceDep = Annotated[AccountService, Depends(get_account_service)]
 
 # --- Текущий пользователь и роли ---
 
@@ -93,7 +105,9 @@ def require_roles(*roles: Role) -> Callable[[User], User]:
     return dependency
 
 
-StaffUser = Annotated[User, Depends(require_roles(Role.DOCTOR, Role.HEAD))]
-DoctorUser = Annotated[User, Depends(require_roles(Role.DOCTOR))]
-HeadUser = Annotated[User, Depends(require_roles(Role.HEAD))]
+StaffUser = Annotated[User, Depends(require_roles(Role.DOCTOR, Role.CHIEF, Role.MANAGER))]
+# Принимают решения: врачи и главврач
+DoctorUser = Annotated[User, Depends(require_roles(Role.DOCTOR, Role.CHIEF))]
+ChiefUser = Annotated[User, Depends(require_roles(Role.CHIEF))]
+ManagerUser = Annotated[User, Depends(require_roles(Role.MANAGER))]
 PatientUser = Annotated[User, Depends(require_roles(Role.PATIENT))]

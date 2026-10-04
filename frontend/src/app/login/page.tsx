@@ -1,9 +1,8 @@
 "use client";
 
-import { Loader2, Stethoscope, User as UserIcon, UserCog } from "lucide-react";
+import { ChartColumn, Loader2, Stethoscope, User as UserIcon, UserCog } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 
 import { BrandLogo } from "@/components/brand";
 import { Button } from "@/components/ui/button";
@@ -17,7 +16,8 @@ import { useLabels } from "@/lib/format";
 
 const GROUPS: { role: Role; title: string; icon: typeof UserIcon }[] = [
   { role: "doctor", title: "Врачи", icon: Stethoscope },
-  { role: "head", title: "Заведующий", icon: UserCog },
+  { role: "chief", title: "Главный врач", icon: UserCog },
+  { role: "manager", title: "Менеджер", icon: ChartColumn },
   { role: "patient", title: "Пациенты", icon: UserIcon },
 ];
 
@@ -29,6 +29,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) router.replace(homePath(user.role));
@@ -36,11 +37,12 @@ export default function LoginPage() {
 
   async function signIn(e: string, p: string) {
     setPending(e);
+    setError(null);
     try {
       const u = await login(e, p);
       router.replace(homePath(u.role));
     } catch (err) {
-      toast.error(errorMessage(err));
+      setError(errorMessage(err));
       setPending(null);
     }
   }
@@ -102,6 +104,7 @@ export default function LoginPage() {
             {pending === email && <Loader2 className="animate-spin" />}
             Войти
           </Button>
+          {error && <p className="text-sm text-destructive">{error}</p>}
         </form>
       </section>
 

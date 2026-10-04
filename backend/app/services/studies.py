@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.ai.contract import AIRequest, AIResult
@@ -29,7 +29,7 @@ from app.domain.models import (
 )
 from app.services import audit
 from app.services.ai_service import AIService
-from app.services.notifications import NotificationService
+from app.services.notifications import NotificationService, RequirementView, requirement_views
 from app.store import Store
 
 Scope = Literal["mine", "all"]
@@ -45,8 +45,9 @@ class StudyView:
     inference: AIInference | None
     decision: Decision | None
     notification: Notification | None
-    appointments: list[tuple[Appointment, User]]  # записи пациента по уведомлению
+    appointments: list[tuple[Appointment, User | None]]  # записи пациента по уведомлению
     can_act: bool
+    requirements: list[RequirementView] = field(default_factory=list)
 
 
 class StudyService:
@@ -67,31 +68,32 @@ class StudyService:
     def _view(self, user: User, study: Study) -> StudyView:
         decision = self.store.decision_for_study(study.id)
         notification = self.store.notification_for_decision(decision.id) if decision else None
-        appointments = (
-            [
-                (a, self.store.get_user(a.doctor_id))
-                for a in self.store.list_appointments(notification_id=notification.id)
-            ]
-            if notification
+        raw = self.store.list_appointments(notification_id=notification.id) if notification else []
+        appointments = [(a, self.store.get_user(a.doctor_id) if a.doctor_id else None) for a in raw]
+        doctor = self.store.get_user(study.treating_doctor_id)
+        requirements = (
+            requirement_views(self.store, decision, raw, doctor)
+            if notification and decision
             else []
         )
         return StudyView(
             study=study,
             patient=self.store.get_patient(study.patient_id),
-            doctor=self.store.get_user(study.treating_doctor_id),
+            doctor=doctor,
             inference=self.store.latest_inference(study.id),
             decision=decision,
             notification=notification,
             appointments=appointments,
             can_act=rules.can_act(user, study),
+            requirements=requirements,
         )
 
     def list(
         self, user: User, *, scope: Scope | None = None, statuses: list[StudyStatus] | None = None
     ) -> list[StudyView]:
-        if user.role not in (Role.DOCTOR, Role.HEAD):
+        if user.role not in rules.STAFF_ROLES:
             raise ForbiddenError("Нет доступа к исследованиям")
-        # Врач по умолчанию видит свою очередь; head всегда видит всё
+        # Врач по умолчанию видит свою очередь; главврач и менеджер — всё
         scope = scope or ("mine" if user.role is Role.DOCTOR else "all")
         doctor_id = user.id if user.role is Role.DOCTOR and scope == "mine" else None
         studies = self.store.list_studies(doctor_id=doctor_id, statuses=statuses)
@@ -199,6 +201,34 @@ class StudyService:
         result = self.ai.parse_manual(data)
         return self._save_inference(user, study, result, source=AISource.MANUAL, latency_ms=0)
 
+    # --- Лечащий врач ---
+
+    def reassign(self, user: User, study_id: str, doctor_id: str) -> StudyView:
+        """Главврач передаёт пациента другому врачу — пока решение не принято."""
+        study = self._get(user, study_id)
+        if user.role is not Role.CHIEF:
+            raise ForbiddenError("Сменить лечащего врача может только главврач")
+        if study.status not in rules.DECIDABLE_STATUSES:
+            raise InvalidTransitionError(
+                "Решение уже принято — лечащего врача не сменить",
+                details={"status": str(study.status)},
+            )
+        doctor = self.store.get_user(doctor_id)
+        if doctor is None or doctor.role is not Role.DOCTOR or not doctor.active:
+            raise NotFoundError("Врач не найден", details={"doctor_id": doctor_id})
+        if doctor.id != study.treating_doctor_id:
+            previous = study.treating_doctor_id
+            study.treating_doctor_id = doctor.id
+            audit.record(
+                self.store,
+                user,
+                "study.reassigned",
+                target_id=study.id,
+                from_doctor_id=previous,
+                to_doctor_id=doctor.id,
+            )
+        return self._view(user, study)
+
     # --- Решение ---
 
     def decide(
@@ -212,7 +242,7 @@ class StudyService:
     ) -> Decision:
         study = self._get(user, study_id)
         if not rules.can_decide(user, study):
-            raise ForbiddenError("Решение принимает только лечащий врач")
+            raise ForbiddenError("Решение принимает лечащий врач или главврач")
         if self.store.decision_for_study(study.id) is not None:
             raise ConflictError("Решение по исследованию уже принято")
         if not rules.can_transition(study.status, StudyStatus.DECIDED):

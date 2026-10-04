@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 
 export default function DashboardPage() {
   return (
-    <AppShell roles={["head"]}>
+    <AppShell roles={["manager"]}>
       <DashboardView />
     </AppShell>
   );

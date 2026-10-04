@@ -2,13 +2,14 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Query
 
-from app.api.deps import DoctorUser, StaffUser, StudyServiceDep
+from app.api.deps import ChiefUser, DoctorUser, StaffUser, StudyServiceDep
 from app.domain.enums import StudyStatus
 from app.schemas.studies import (
     AuditEventOut,
     DecisionIn,
     DecisionOut,
     InferenceOut,
+    ReassignIn,
     StudyCard,
     StudyHistoryOut,
     StudyListItem,
@@ -57,6 +58,15 @@ async def decide(
         user, study_id, chosen_types=body.chosen_types, details=body.details, comment=body.comment
     )
     return DecisionOut.build(decision)
+
+
+@router.post(
+    "/{study_id}/reassign", response_model=StudyCard, summary="Сменить лечащего врача (главврач)"
+)
+async def reassign(
+    study_id: str, body: ReassignIn, user: ChiefUser, service: StudyServiceDep
+) -> StudyCard:
+    return StudyCard.build(service.reassign(user, study_id, body.doctor_id))
 
 
 @router.get("/{study_id}/history", response_model=StudyHistoryOut, summary="Все AI-прогоны")

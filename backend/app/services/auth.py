@@ -21,6 +21,8 @@ class AuthService:
                 self.store, None, "auth.login_failed", target_type="auth", target_id=email.lower()
             )
             raise UnauthorizedError("Неверный email или пароль")
+        if not user.active:
+            raise UnauthorizedError("Доступ отключён главврачом")
         token = create_access_token(
             user_id=user.id,
             role=str(user.role),
@@ -38,11 +40,13 @@ class AuthService:
         user = self.store.get_user(claims["sub"])
         if user is None:
             raise UnauthorizedError("User no longer exists")
+        if not user.active:
+            raise UnauthorizedError("Доступ отключён главврачом")
         return user
 
     def patient_profile(self, user: User) -> Patient | None:
         return self.store.patient_by_user(user.id) if user.role is Role.PATIENT else None
 
     def demo_accounts(self) -> list[User]:
-        order = {Role.DOCTOR: 0, Role.HEAD: 1, Role.PATIENT: 2}
+        order = {Role.DOCTOR: 0, Role.CHIEF: 1, Role.MANAGER: 2, Role.PATIENT: 3}
         return sorted(self.store.users.values(), key=lambda u: (order[u.role], u.full_name))

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Lock } from "lucide-react";
+import { ArrowLeft, Loader2, Lock } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
@@ -14,8 +14,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { errorMessage } from "@/lib/api/client";
-import { useStudy } from "@/lib/api/hooks";
-import type { StudyStatus } from "@/lib/api/types";
+import { useDoctors, useReassign, useStudy } from "@/lib/api/hooks";
+import type { StudyCard, StudyStatus } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth";
 import { fmtDate, useLabels } from "@/lib/format";
 
@@ -23,7 +23,7 @@ const ANALYZABLE: StudyStatus[] = ["new", "ai_ready", "ai_failed"];
 
 export default function StudyPage() {
   return (
-    <AppShell roles={["doctor", "head"]}>
+    <AppShell roles={["doctor", "chief", "manager"]}>
       <StudyView />
     </AppShell>
   );
@@ -50,7 +50,7 @@ function StudyView() {
     );
 
   // Анализ идёт сам; вручную можно лишь загрузить ответ AI (запасной путь §6.5), пока нет решения
-  const canUpload = (study.can_act || user?.role === "head") && ANALYZABLE.includes(study.status);
+  const canUpload = study.can_act && ANALYZABLE.includes(study.status);
 
   return (
     <div className="grid gap-4">
@@ -75,7 +75,10 @@ function StudyView() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {!study.can_act && user?.role === "doctor" && (
+          {user?.role === "chief" && ANALYZABLE.includes(study.status) && (
+            <ReassignControl study={study} />
+          )}
+          {!study.can_act && user?.role !== "chief" && (
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <Lock className="size-3" /> Лечащий врач: {study.doctor.full_name}
             </span>
@@ -104,5 +107,33 @@ function StudyView() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Главврач передаёт пациента другому врачу, пока решение не принято. */
+function ReassignControl({ study }: { study: StudyCard }) {
+  const doctors = useDoctors();
+  const reassign = useReassign(study.id);
+  const label = useLabels();
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2 text-sm">
+      <span className="text-muted-foreground">Лечащий врач:</span>
+      <select
+        className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
+        value={study.doctor.id}
+        disabled={reassign.isPending}
+        onChange={(e) => reassign.mutate(e.target.value)}
+      >
+        {(doctors.data ?? [study.doctor]).map((d) => (
+          <option key={d.id} value={d.id}>
+            {d.full_name} — {label("specialists", d.specialty)}
+          </option>
+        ))}
+      </select>
+      {reassign.isPending && <Loader2 className="size-4 animate-spin" />}
+      {reassign.isError && (
+        <span className="text-xs text-destructive">{errorMessage(reassign.error)}</span>
+      )}
+    </span>
   );
 }

@@ -15,8 +15,8 @@ from app.domain.enums import (
     StudyStatus,
     StudyType,
 )
-from app.domain.models import AIInference, AuditEvent, Decision, Notification, User
-from app.schemas.common import DoctorBrief, PatientBrief
+from app.domain.models import AIInference, Appointment, AuditEvent, Decision, Notification, User
+from app.schemas.common import BookingProgress, DoctorBrief, PatientBrief, RequirementOut
 from app.services.studies import StudyView
 
 # --- AI ---
@@ -71,6 +71,10 @@ class InferenceBrief(BaseModel):
 
 
 # --- Решение ---
+
+
+class ReassignIn(BaseModel):
+    doctor_id: str
 
 
 class DecisionIn(BaseModel):
@@ -160,9 +164,22 @@ class NotificationOut(BaseModel):
 
 class CardAppointmentOut(BaseModel):
     id: str
-    doctor: DoctorBrief
+    doctor: DoctorBrief | None  # None — запись на исследование
+    research_type: str | None
+    requirement: str | None
     scheduled_for: datetime
     status: AppointmentStatus
+
+    @classmethod
+    def build(cls, a: Appointment, doctor: User | None) -> CardAppointmentOut:
+        return cls(
+            id=a.id,
+            doctor=DoctorBrief.build(doctor) if doctor else None,
+            research_type=a.research_type,
+            requirement=a.requirement,
+            scheduled_for=a.scheduled_for,
+            status=a.status,
+        )
 
 
 # --- Study ---
@@ -178,6 +195,7 @@ class StudyListItem(BaseModel):
     doctor: DoctorBrief
     ai: InferenceBrief | None
     decision: DecisionBrief | None
+    booking: BookingProgress | None  # сколько направлений пациент уже закрыл записью
     can_act: bool
 
     @classmethod
@@ -201,6 +219,7 @@ class StudyListItem(BaseModel):
             )
             if v.decision
             else None,
+            booking=BookingProgress.build(v.requirements),
             can_act=v.can_act,
         )
 
@@ -219,6 +238,7 @@ class StudyCard(BaseModel):
     decision: DecisionOut | None
     notification: NotificationOut | None
     appointments: list[CardAppointmentOut]
+    requirements: list[RequirementOut]
     can_act: bool
 
     @classmethod
@@ -237,15 +257,8 @@ class StudyCard(BaseModel):
             ai=InferenceOut.build(v.inference) if v.inference else None,
             decision=DecisionOut.build(v.decision) if v.decision else None,
             notification=NotificationOut.build(v.notification) if v.notification else None,
-            appointments=[
-                CardAppointmentOut(
-                    id=a.id,
-                    doctor=DoctorBrief.build(doctor),
-                    scheduled_for=a.scheduled_for,
-                    status=a.status,
-                )
-                for a, doctor in v.appointments
-            ],
+            appointments=[CardAppointmentOut.build(a, doctor) for a, doctor in v.appointments],
+            requirements=[RequirementOut.build(r) for r in v.requirements],
             can_act=v.can_act,
         )
 

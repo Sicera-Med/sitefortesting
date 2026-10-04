@@ -10,8 +10,8 @@ from app.domain.enums import (
     RecommendationType,
     StudyType,
 )
-from app.schemas.common import DoctorBrief
-from app.schemas.studies import NotificationOut
+from app.schemas.common import BookingProgress, DoctorBrief, RequirementOut
+from app.schemas.studies import CardAppointmentOut, NotificationOut
 from app.services.appointments import AppointmentView, DaySlots
 from app.services.notifications import PatientNotificationView
 
@@ -27,13 +27,6 @@ class NotificationStudyBrief(BaseModel):
     performed_at: datetime
 
 
-class NotificationAppointmentOut(BaseModel):
-    id: str
-    doctor: DoctorBrief
-    scheduled_for: datetime
-    status: AppointmentStatus
-
-
 class PatientNotificationOut(BaseModel):
     notification: NotificationOut
     recommendations: list[RecommendationType]
@@ -41,10 +34,10 @@ class PatientNotificationOut(BaseModel):
     comment: str | None
     study: NotificationStudyBrief
     treating_doctor: DoctorBrief
-    suggested_specialties: list[str]
-    suggested_doctors: list[DoctorBrief]
-    only_treating_doctor: bool
-    appointments: list[NotificationAppointmentOut]
+    # Куда записаться: кейс закрыт, когда записи есть по всем направлениям
+    requirements: list[RequirementOut]
+    booking: BookingProgress | None
+    appointments: list[CardAppointmentOut]
 
     @classmethod
     def build(cls, v: PatientNotificationView) -> PatientNotificationOut:
@@ -60,18 +53,9 @@ class PatientNotificationOut(BaseModel):
                 performed_at=v.study.performed_at,
             ),
             treating_doctor=DoctorBrief.build(v.treating_doctor),
-            suggested_specialties=v.suggested_specialties,
-            suggested_doctors=[DoctorBrief.build(d) for d in v.suggested_doctors],
-            only_treating_doctor=v.only_treating_doctor,
-            appointments=[
-                NotificationAppointmentOut(
-                    id=a.id,
-                    doctor=DoctorBrief.build(doctor),
-                    scheduled_for=a.scheduled_for,
-                    status=a.status,
-                )
-                for a, doctor in v.appointments
-            ],
+            requirements=[RequirementOut.build(r) for r in v.requirements],
+            booking=BookingProgress.build(v.requirements),
+            appointments=[CardAppointmentOut.build(a, doctor) for a, doctor in v.appointments],
         )
 
 
@@ -91,9 +75,13 @@ class DaySlotsOut(BaseModel):
 
 
 class AppointmentIn(BaseModel):
-    doctor_id: str
+    # Врач или кабинет исследования — одно из двух
+    doctor_id: str | None = None
+    research_type: str | None = None
     scheduled_for: AwareDatetime  # с часовым поясом, например 2026-10-05T10:00:00+03:00
     notification_id: str | None = None
+    # Какое направление закрывает запись (requirements[].key) — обязательно с notification_id
+    requirement: str | None = None
 
 
 class AppointmentPatch(BaseModel):
@@ -112,7 +100,10 @@ class AppointmentOut(BaseModel):
     scheduled_for: datetime
     created_at: datetime
     notification_id: str | None
-    doctor: DoctorBrief
+    study_id: str | None
+    requirement: str | None
+    doctor: DoctorBrief | None  # None — запись на исследование
+    research_type: str | None
     patient: AppointmentPatientBrief
 
     @classmethod
@@ -124,7 +115,10 @@ class AppointmentOut(BaseModel):
             scheduled_for=a.scheduled_for,
             created_at=a.created_at,
             notification_id=a.notification_id,
-            doctor=DoctorBrief.build(v.doctor),
+            study_id=v.study_id,
+            requirement=a.requirement,
+            doctor=DoctorBrief.build(v.doctor) if v.doctor else None,
+            research_type=a.research_type,
             patient=AppointmentPatientBrief(
                 id=v.patient.id, full_name=v.patient.full_name, phone=v.patient.phone
             ),

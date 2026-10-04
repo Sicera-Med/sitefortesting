@@ -34,7 +34,7 @@ from app.domain.models import (
     Study,
     User,
 )
-from app.domain.rules import contact_channels
+from app.domain.rules import all_covered, contact_channels
 from app.domain.texts import notification_text
 from app.store import Store
 
@@ -46,7 +46,8 @@ S = StudyStatus
 # --- Персонал: (ключ, ФИО, email, роль, специальность) ---
 
 STAFF = [
-    ("head", "Смирнова Ольга Николаевна", "head@clinic.demo", Role.HEAD, None),
+    ("chief", "Смирнова Ольга Николаевна", "chief@clinic.demo", Role.CHIEF, None),
+    ("manager", "Лебедев Константин Ильич", "manager@clinic.demo", Role.MANAGER, None),
     ("petrov", "Петров Иван Сергеевич", "petrov@clinic.demo", Role.DOCTOR, "therapist"),
     ("sidorova", "Сидорова Анна Викторовна", "sidorova@clinic.demo", Role.DOCTOR, "pulmonologist"),
     ("kim", "Ким Алексей Дмитриевич", "kim@clinic.demo", Role.DOCTOR, "neurologist"),
@@ -161,8 +162,9 @@ class DecisionSpec:
 @dataclass
 class NotificationSpec:
     read: bool = False
-    # Запись: (ключ врача, через сколько дней, час) — к этому врачу на это время
-    booked_with: tuple[str, int, int] | None = None
+    # Записи по направлениям: (ключ направления, ключ врача или None для исследования,
+    # через сколько дней, час)
+    bookings: tuple[tuple[str, str | None, int, int], ...] = ()
 
 
 @dataclass
@@ -201,6 +203,10 @@ STUDIES: list[StudySpec] = [
             (R.SPECIALIST_CONSULT, R.ADDITIONAL_RESEARCH),
             {"specialists": ["pulmonologist"], "research_types": ["ct"]},
             "Контрольная КТ через 3 месяца по Fleischner и консультация пульмонолога.",
+        ),
+        # Записался к пульмонологу, на КТ — ещё нет: кейс открыт (1 из 2)
+        notification=NotificationSpec(
+            read=True, bookings=(("specialist:pulmonologist", "sidorova", 2, 11),)
         ),
     ),
     StudySpec(
@@ -309,7 +315,9 @@ STUDIES: list[StudySpec] = [
             {"specialists": ["orthopedist"]},
             "Консультация ортопеда для решения о тактике лечения.",
         ),
-        notification=NotificationSpec(read=True, booked_with=("orlov", 3, 10)),
+        notification=NotificationSpec(
+            read=True, bookings=(("specialist:orthopedist", "orlov", 3, 10),)
+        ),
     ),
     StudySpec(
         patient="novikov",
@@ -623,22 +631,24 @@ class _Seeder:
             self.audit(
                 patient_user, "notification.read", study.id, t, notification_id=notification.id
             )
-        if n.booked_with:
-            doctor_key, days, hour = n.booked_with
+        for requirement, doctor_key, days, hour in n.bookings:
             t += timedelta(hours=1)
             appointment = self.store.add_appointment(
                 Appointment(
                     id=new_id("ap"),
                     patient_id=patient.id,
-                    doctor_id=self.users[doctor_key].id,
+                    doctor_id=self.users[doctor_key].id if doctor_key else None,
+                    research_type=None if doctor_key else requirement.split(":", 1)[1],
                     scheduled_for=_slot(self.now, self.tz, days, hour),
                     status=AppointmentStatus.SCHEDULED,
                     created_at=t,
                     notification_id=notification.id,
+                    requirement=requirement,
                 )
             )
+            if notification.patient_action is None:
+                notification.action_at = t
             notification.patient_action = PatientActionType.BOOKED
-            notification.action_at = t
             notification.appointment_id = appointment.id
             self.audit(
                 patient_user,
@@ -646,8 +656,11 @@ class _Seeder:
                 study.id,
                 t,
                 appointment_id=appointment.id,
-                doctor_id=appointment.doctor_id,
+                requirement=requirement,
             )
+        # Кейс закрыт, только если записи есть по всем направлениям
+        appointments = self.store.list_appointments(notification_id=notification.id)
+        assert (study.status is S.COMPLETED) == all_covered(decision, appointments), spec.patient
 
 
 def seed_demo(store: Store, *, now: datetime | None = None, tz: str = "Europe/Moscow") -> None:

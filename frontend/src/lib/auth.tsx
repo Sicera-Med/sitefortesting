@@ -20,7 +20,7 @@ const AuthContext = createContext<AuthState | null>(null);
 
 export function homePath(role: Role): string {
   if (role === "patient") return "/patient";
-  if (role === "head") return "/dashboard";
+  if (role === "manager") return "/dashboard";
   return "/studies";
 }
 

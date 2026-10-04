@@ -48,11 +48,15 @@ class Store:
         email = email.strip().lower()
         return next((u for u in self.users.values() if u.email.lower() == email), None)
 
-    def list_doctors(self, specialty: str | None = None) -> list[User]:
+    def list_doctors(
+        self, specialty: str | None = None, *, include_inactive: bool = False
+    ) -> list[User]:
         doctors = [
             u
             for u in self.users.values()
-            if u.role is Role.DOCTOR and (specialty is None or u.specialty == specialty)
+            if u.role is Role.DOCTOR
+            and (include_inactive or u.active)
+            and (specialty is None or u.specialty == specialty)
         ]
         return sorted(doctors, key=lambda u: u.full_name)
 
@@ -163,6 +167,7 @@ class Store:
         doctor_id: str | None = None,
         status: AppointmentStatus | None = None,
         notification_id: str | None = None,
+        research_type: str | None = None,
     ) -> list[Appointment]:
         result = [
             a
@@ -171,13 +176,23 @@ class Store:
             and (doctor_id is None or a.doctor_id == doctor_id)
             and (status is None or a.status is status)
             and (notification_id is None or a.notification_id == notification_id)
+            and (research_type is None or a.research_type == research_type)
         ]
         return sorted(result, key=lambda a: a.scheduled_for)
 
-    def busy_slots(self, doctor_id: str) -> set[datetime]:
+    def busy_slots(
+        self, *, doctor_id: str | None = None, research_type: str | None = None
+    ) -> set[datetime]:
+        """Занятое время врача или кабинета исследования."""
+        assert (doctor_id is None) != (research_type is None)
         return {
             a.scheduled_for
-            for a in self.list_appointments(doctor_id=doctor_id, status=AppointmentStatus.SCHEDULED)
+            for a in self.list_appointments(
+                doctor_id=doctor_id,
+                research_type=research_type,
+                status=AppointmentStatus.SCHEDULED,
+            )
+            if doctor_id is not None or a.doctor_id is None
         }
 
     # --- Audit ---

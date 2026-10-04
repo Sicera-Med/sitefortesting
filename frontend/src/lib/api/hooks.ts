@@ -6,6 +6,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
 import type {
+  Account,
+  AccountPatch,
   Appointment,
   AppointmentIn,
   AuditEvent,
@@ -18,6 +20,9 @@ import type {
   DoctorBrief,
   Inference,
   PatientNotification,
+  StaffDoctor,
+  StaffDoctorIn,
+  StaffDoctorPatch,
   StudyCard,
   StudyListItem,
   StudyStatus,
@@ -105,6 +110,71 @@ export function useDecide(id: string) {
   });
 }
 
+export function useReassign(id: string) {
+  const invalidate = useInvalidateStudy(id);
+  return useMutation({
+    mutationFn: (doctorId: string) =>
+      api<StudyCard>(`/studies/${id}/reassign`, { method: "POST", body: { doctor_id: doctorId } }),
+    onSuccess: invalidate,
+  });
+}
+
+// --- Личный кабинет ---
+
+export function useAccount() {
+  return useQuery({ queryKey: ["account"], queryFn: () => api<Account>("/account") });
+}
+
+export function useUpdateAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AccountPatch) => api<Account>("/account", { method: "PATCH", body }),
+    onSuccess: (data) => qc.setQueryData(["account"], data),
+  });
+}
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: (body: { old_password: string; new_password: string }) =>
+      api<void>("/account/password", { method: "POST", body }),
+  });
+}
+
+// --- Главврач: врачи ---
+
+export function useStaffDoctors() {
+  return useQuery({
+    queryKey: ["staff-doctors"],
+    queryFn: () => api<StaffDoctor[]>("/staff/doctors"),
+  });
+}
+
+function useInvalidateStaff() {
+  const qc = useQueryClient();
+  return () => {
+    qc.invalidateQueries({ queryKey: ["staff-doctors"] });
+    qc.invalidateQueries({ queryKey: ["doctors"] });
+  };
+}
+
+export function useCreateDoctor() {
+  const invalidate = useInvalidateStaff();
+  return useMutation({
+    mutationFn: (body: StaffDoctorIn) =>
+      api<StaffDoctor>("/staff/doctors", { method: "POST", body }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateDoctor() {
+  const invalidate = useInvalidateStaff();
+  return useMutation({
+    mutationFn: ({ id, ...body }: StaffDoctorPatch & { id: string }) =>
+      api<StaffDoctor>(`/staff/doctors/${id}`, { method: "PATCH", body }),
+    onSuccess: invalidate,
+  });
+}
+
 // --- Пациент ---
 
 export function useMyNotifications() {
@@ -120,6 +190,7 @@ function useInvalidatePatient() {
     qc.invalidateQueries({ queryKey: ["my-notifications"] });
     qc.invalidateQueries({ queryKey: ["appointments"] });
     qc.invalidateQueries({ queryKey: ["slots"] });
+    qc.invalidateQueries({ queryKey: ["research-slots"] });
   };
 }
 
@@ -159,10 +230,21 @@ export function useSlots(doctorId: string | null, days = 7) {
   });
 }
 
-export function useAppointments() {
+/** Свободное время кабинета исследования (КТ, биопсия, анализы…). */
+export function useResearchSlots(code: string | null, days = 7) {
   return useQuery({
-    queryKey: ["appointments"],
-    queryFn: () => api<Appointment[]>("/appointments"),
+    queryKey: ["research-slots", code, days],
+    queryFn: () => api<DaySlots[]>(`/research/${code}/slots`, { query: { days } }),
+    enabled: !!code,
+  });
+}
+
+/** Записи: пациенту — свои, врачу — его расписание, главврачу — расписание врача doctorId. */
+export function useAppointments(doctorId?: string | null) {
+  return useQuery({
+    queryKey: ["appointments", doctorId ?? null],
+    queryFn: () =>
+      api<Appointment[]>("/appointments", { query: { doctor_id: doctorId ?? undefined } }),
   });
 }
 

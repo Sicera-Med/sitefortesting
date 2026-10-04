@@ -6,6 +6,8 @@ import { useMemo } from "react";
 
 import { useDictionaries } from "./api/hooks";
 import type {
+  DoctorBrief,
+  Requirement,
   Dictionaries,
   NotificationChannel,
   RecommendationDetails,
@@ -42,7 +44,8 @@ export function channelsText(channels: NotificationChannel[]): string {
 }
 
 export const ROLE_LABELS = {
-  head: "Заведующий",
+  chief: "Главный врач",
+  manager: "Менеджер",
   doctor: "Врач",
   patient: "Пациент",
 } as const;
@@ -122,4 +125,24 @@ export function useDecisionItems() {
       label: RECOMMENDATION_LABELS[t],
       text: detailsText(t, details),
     }));
+}
+
+/** Подпись направления из решения врача: «Повторный приём», «Консультация: Кардиолог», «КТ». */
+export function useRequirementLabel() {
+  const label = useLabels();
+  return (r: Pick<Requirement, "kind" | "code">): string =>
+    r.kind === "treating"
+      ? "Повторный приём у лечащего врача"
+      : r.kind === "specialist"
+        ? `Консультация: ${label("specialists", r.code)}`
+        : label("research_types", r.code);
+}
+
+/** Куда запись: врач со специальностью или исследование. */
+export function useAppointmentTarget() {
+  const label = useLabels();
+  return (a: { doctor: DoctorBrief | null; research_type: string | null }): string =>
+    a.doctor
+      ? `${a.doctor.full_name} (${label("specialists", a.doctor.specialty)})`
+      : label("research_types", a.research_type);
 }

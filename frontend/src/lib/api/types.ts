@@ -1,6 +1,6 @@
 // Типы API — вручную по backend/app/schemas (SPEC §7). Время — ISO-строки в UTC.
 
-export type Role = "head" | "doctor" | "patient";
+export type Role = "chief" | "manager" | "doctor" | "patient";
 export type Sex = "m" | "f";
 export type StudyType = "xray" | "ct" | "mri" | "ultrasound" | "mammography";
 export type StudyStatus = "new" | "ai_ready" | "ai_failed" | "decided" | "notified" | "completed";
@@ -158,14 +158,34 @@ export interface StudyListItem {
   doctor: DoctorBrief;
   ai: { recommendation: RecommendationType; confidence: number } | null;
   decision: { chosen_types: RecommendationType[]; accepted_ai: boolean | null } | null;
+  booking: BookingProgress | null; // сколько направлений пациент закрыл записью
   can_act: boolean;
 }
 
 export interface CardAppointment {
   id: string;
-  doctor: DoctorBrief;
+  doctor: DoctorBrief | null; // null — запись на исследование
+  research_type: string | null;
+  requirement: string | null;
   scheduled_for: string;
   status: AppointmentStatus;
+}
+
+export type RequirementKind = "treating" | "specialist" | "research";
+
+/** Направление из решения врача; кейс закрыт, когда записи есть по всем. */
+export interface Requirement {
+  key: string; // "treating" | "specialist:<код>" | "research:<код>"
+  kind: RequirementKind;
+  code: string | null;
+  doctor: DoctorBrief | null; // врач записи; для повторного приёма — лечащий врач
+  appointment_id: string | null;
+  scheduled_for: string | null;
+}
+
+export interface BookingProgress {
+  booked: number;
+  required: number;
 }
 
 export interface StudyCard {
@@ -182,6 +202,7 @@ export interface StudyCard {
   decision: Decision | null;
   notification: Notification | null;
   appointments: CardAppointment[]; // записи пациента по уведомлению
+  requirements: Requirement[];
   can_act: boolean;
 }
 
@@ -205,9 +226,8 @@ export interface PatientNotification {
   comment: string | null;
   study: { id: string; study_type: StudyType; body_region: string; performed_at: string };
   treating_doctor: DoctorBrief;
-  suggested_specialties: string[];
-  suggested_doctors: DoctorBrief[];
-  only_treating_doctor: boolean; // только повторный приём — запись лишь к лечащему врачу
+  requirements: Requirement[];
+  booking: BookingProgress | null;
   appointments: CardAppointment[];
 }
 
@@ -217,9 +237,12 @@ export interface DaySlots {
 }
 
 export interface AppointmentIn {
-  doctor_id: string;
+  // Врач или кабинет исследования — одно из двух
+  doctor_id?: string | null;
+  research_type?: string | null;
   scheduled_for: string; // ISO с часовым поясом
   notification_id?: string | null;
+  requirement?: string | null; // ключ направления — обязательно с notification_id
 }
 
 export interface Appointment {
@@ -228,9 +251,57 @@ export interface Appointment {
   scheduled_for: string;
   created_at: string;
   notification_id: string | null;
-  doctor: DoctorBrief;
+  study_id: string | null;
+  requirement: string | null;
+  doctor: DoctorBrief | null; // null — запись на исследование
+  research_type: string | null;
   patient: { id: string; full_name: string; phone: string };
 }
+
+// --- Личный кабинет ---
+
+export interface Account {
+  id: string;
+  role: Role;
+  full_name: string;
+  email: string;
+  specialty: string | null;
+  // Только у пациента
+  birth_date: string | null;
+  phone: string | null;
+  social: string | null;
+  notify_channels: NotificationChannel[];
+  available_channels: NotificationChannel[]; // есть контакт для канала
+}
+
+export interface AccountPatch {
+  email?: string;
+  phone?: string;
+  social?: string;
+  notify_channels?: NotificationChannel[];
+}
+
+// --- Главврач: врачи ---
+
+export interface StaffDoctor {
+  id: string;
+  full_name: string;
+  email: string;
+  specialty: string | null;
+  active: boolean;
+  open_studies: number; // ждут решения
+  decisions: number;
+  upcoming_appointments: number; // записи на ближайшие 7 дней
+}
+
+export interface StaffDoctorIn {
+  full_name: string;
+  email: string;
+  specialty: string;
+  password: string;
+}
+
+export type StaffDoctorPatch = Partial<Pick<StaffDoctor, "full_name" | "specialty" | "active">>;
 
 // --- Дашборд ---
 

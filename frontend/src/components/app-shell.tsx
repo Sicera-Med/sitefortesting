@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, LogOut } from "lucide-react";
+import { Loader2, LogOut, UserRound } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
@@ -13,11 +13,16 @@ import { ROLE_LABELS, useLabels } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const NAV: Record<Role, { href: string; label: string }[]> = {
-  doctor: [{ href: "/studies", label: "Мои исследования" }],
-  head: [
-    { href: "/dashboard", label: "Дашборд" },
-    { href: "/studies", label: "Исследования" },
+  doctor: [
+    { href: "/studies", label: "Мои исследования" },
+    { href: "/schedule", label: "Расписание" },
   ],
+  chief: [
+    { href: "/studies", label: "Исследования" },
+    { href: "/doctors", label: "Врачи" },
+    { href: "/schedule", label: "Расписание" },
+  ],
+  manager: [{ href: "/dashboard", label: "Дашборд" }],
   patient: [{ href: "/patient", label: "Мой кабинет" }],
 };
 
@@ -68,12 +73,24 @@ export function AppShell({ roles, children }: { roles: Role[]; children: React.R
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-3">
-            <div className="hidden text-right text-sm leading-tight sm:block">
-              <div className="font-medium">{user.full_name}</div>
-              <div className="text-xs text-muted-foreground">
-                {user.specialty ? label("specialists", user.specialty) : ROLE_LABELS[user.role]}
+            <Link
+              href="/account"
+              title="Личный кабинет"
+              className={cn(
+                "flex items-center gap-2 rounded-full py-1 pr-1 pl-3 transition-colors hover:bg-accent",
+                pathname.startsWith("/account") && "bg-accent",
+              )}
+            >
+              <div className="hidden text-right text-sm leading-tight sm:block">
+                <div className="font-medium">{user.full_name}</div>
+                <div className="text-xs text-muted-foreground">
+                  {user.specialty ? label("specialists", user.specialty) : ROLE_LABELS[user.role]}
+                </div>
               </div>
-            </div>
+              <span className="grid size-9 place-items-center rounded-full bg-primary/10 text-primary">
+                <UserRound className="size-5" />
+              </span>
+            </Link>
             <Button variant="ghost" size="icon" onClick={logout} title="Выйти">
               <LogOut />
             </Button>

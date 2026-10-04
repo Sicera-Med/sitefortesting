@@ -7,7 +7,12 @@ from app.core.clock import utcnow
 from app.core.errors import ConflictError, ForbiddenError, InvalidTransitionError, NotFoundError
 from app.core.ids import new_id
 from app.domain import rules
-from app.domain.enums import NotificationStatus, PatientActionType, StudyStatus
+from app.domain.enums import (
+    AppointmentStatus,
+    NotificationStatus,
+    PatientActionType,
+    StudyStatus,
+)
 from app.domain.models import Appointment, Decision, Notification, Patient, Study, User
 from app.domain.texts import notification_text
 from app.services import audit
@@ -17,15 +22,22 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
+class RequirementView:
+    """Направление из решения врача и запись, которая его закрывает (если есть)."""
+
+    requirement: rules.Requirement
+    appointment: Appointment | None
+    doctor: User | None  # врач записи; для повторного приёма до записи — лечащий врач
+
+
+@dataclass(slots=True)
 class PatientNotificationView:
     notification: Notification
     decision: Decision
     study: Study
     treating_doctor: User
-    suggested_specialties: list[str]
-    suggested_doctors: list[User]
-    only_treating_doctor: bool  # только повторный приём — запись лишь к лечащему врачу
-    appointments: list[tuple[Appointment, User]]
+    requirements: list[RequirementView]
+    appointments: list[tuple[Appointment, User | None]]
 
 
 class NotificationService:
@@ -92,23 +104,15 @@ class NotificationService:
         decision = self.store.get_decision(notification.decision_id)
         study = self.store.get_study(notification.study_id)
         treating = self.store.get_user(study.treating_doctor_id)
-        specialties = rules.suggested_specialties(decision)
-        doctors: list[User] = []
-        if rules.needs_treating_doctor(decision):
-            doctors.append(treating)
-        for specialty in specialties:
-            doctors += [d for d in self.store.list_doctors(specialty) if d not in doctors]
+        appointments = self.store.list_appointments(notification_id=notification.id)
         return PatientNotificationView(
             notification=notification,
             decision=decision,
             study=study,
             treating_doctor=treating,
-            suggested_specialties=specialties,
-            suggested_doctors=doctors,
-            only_treating_doctor=rules.only_treating_doctor(decision),
+            requirements=requirement_views(self.store, decision, appointments, treating),
             appointments=[
-                (a, self.store.get_user(a.doctor_id))
-                for a in self.store.list_appointments(notification_id=notification.id)
+                (a, self.store.get_user(a.doctor_id) if a.doctor_id else None) for a in appointments
             ],
         )
 
@@ -151,7 +155,33 @@ class NotificationService:
         return self._view(notification)
 
 
+def requirement_views(
+    store: Store, decision: Decision, appointments: list[Appointment], treating: User
+) -> list[RequirementView]:
+    active = {
+        a.requirement: a
+        for a in appointments
+        if a.requirement and a.status is AppointmentStatus.SCHEDULED
+    }
+    result = []
+    for req in rules.required_bookings(decision):
+        a = active.get(req.key)
+        if a is not None:
+            doctor = store.get_user(a.doctor_id) if a.doctor_id else None
+        else:
+            doctor = treating if req.kind == "treating" else None
+        result.append(RequirementView(req, a, doctor))
+    return result
+
+
 def complete_study(store: Store, study_id: str) -> None:
     study = store.get_study(study_id)
     if rules.can_transition(study.status, StudyStatus.COMPLETED):
         study.status = StudyStatus.COMPLETED
+
+
+def reopen_study(store: Store, study_id: str) -> None:
+    """Пациент отменил запись — направление снова не закрыто, кейс ждёт записи."""
+    study = store.get_study(study_id)
+    if study.status is StudyStatus.COMPLETED:
+        study.status = StudyStatus.NOTIFIED

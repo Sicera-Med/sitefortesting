@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Lock } from "lucide-react";
+import { Archive, Loader2, Lock } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -23,21 +23,22 @@ import { useAuth } from "@/lib/auth";
 import { fmtDate, STATUS_LABELS, useLabels } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type Filter = "all" | "todo" | StudyStatus;
+type View = "work" | "archive";
+type ArchiveFilter = "all" | StudyStatus;
 
-// «К работе» — то, где врачу нужно что-то сделать
-const TODO: StudyStatus[] = ["new", "ai_ready", "ai_failed", "decided"];
+// В работе — ждут решения врача; решённые уходят в архив
+const WORK: StudyStatus[] = ["new", "ai_ready", "ai_failed"];
+const ARCHIVE: StudyStatus[] = ["decided", "notified", "completed"];
 
-const FILTERS: { value: Filter; label: string }[] = [
-  { value: "all", label: "Все" },
-  { value: "todo", label: "К работе" },
-  { value: "notified", label: STATUS_LABELS.notified },
+const ARCHIVE_FILTERS: { value: ArchiveFilter; label: string }[] = [
+  { value: "all", label: "Весь архив" },
+  { value: "notified", label: "Ждём записи пациента" },
   { value: "completed", label: STATUS_LABELS.completed },
 ];
 
 export default function StudiesPage() {
   return (
-    <AppShell roles={["doctor", "head"]}>
+    <AppShell roles={["doctor", "chief", "manager"]}>
       <StudiesQueue />
     </AppShell>
   );
@@ -47,8 +48,9 @@ function StudiesQueue() {
   const { user } = useAuth();
   const isDoctor = user?.role === "doctor";
   const [scope, setScope] = useState<"mine" | "all">(isDoctor ? "mine" : "all");
-  const [filter, setFilter] = useState<Filter>("all");
-  const status = filter === "all" ? undefined : filter === "todo" ? TODO : [filter as StudyStatus];
+  const [view, setView] = useState<View>("work");
+  const [filter, setFilter] = useState<ArchiveFilter>("all");
+  const status = view === "work" ? WORK : filter === "all" ? ARCHIVE : [filter];
   const { data, isLoading, error } = useStudies(scope, status);
   const label = useLabels();
   const router = useRouter();
@@ -58,7 +60,11 @@ function StudiesQueue() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-3xl font-medium tracking-tight md:text-4xl">
-            {isDoctor && scope === "mine" ? "Мои исследования" : "Все исследования"}
+            {view === "archive"
+              ? "Архив"
+              : isDoctor && scope === "mine"
+                ? "Мои исследования"
+                : "Все исследования"}
           </h1>
           <p className="text-sm text-muted-foreground">{data ? `${data.length} шт.` : " "}</p>
         </div>
@@ -71,15 +77,25 @@ function StudiesQueue() {
               </TabsList>
             </Tabs>
           )}
-          <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)}>
+          <Tabs value={view} onValueChange={(v) => setView(v as View)}>
             <TabsList>
-              {FILTERS.map((f) => (
-                <TabsTrigger key={f.value} value={f.value}>
-                  {f.label}
-                </TabsTrigger>
-              ))}
+              <TabsTrigger value="work">В работе</TabsTrigger>
+              <TabsTrigger value="archive">
+                <Archive /> Архив
+              </TabsTrigger>
             </TabsList>
           </Tabs>
+          {view === "archive" && (
+            <Tabs value={filter} onValueChange={(v) => setFilter(v as ArchiveFilter)}>
+              <TabsList>
+                {ARCHIVE_FILTERS.map((f) => (
+                  <TabsTrigger key={f.value} value={f.value}>
+                    {f.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          )}
         </div>
       </div>
 
@@ -115,7 +131,9 @@ function StudiesQueue() {
             {data?.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
-                  Нет исследований
+                  {view === "work"
+                    ? "Все исследования разобраны — решённые в архиве"
+                    : "Архив пуст"}
                 </TableCell>
               </TableRow>
             )}
@@ -159,7 +177,21 @@ function StudiesQueue() {
                 </TableCell>
                 <TableCell>
                   {s.decision ? (
-                    <AgreementBadge accepted={s.decision.accepted_ai} />
+                    <div className="grid justify-items-start gap-1">
+                      <AgreementBadge accepted={s.decision.accepted_ai} />
+                      {s.booking && (
+                        <span
+                          className={cn(
+                            "text-xs",
+                            s.booking.booked === s.booking.required
+                              ? "text-emerald-700"
+                              : "text-muted-foreground",
+                          )}
+                        >
+                          записан {s.booking.booked} из {s.booking.required}
+                        </span>
+                      )}
+                    </div>
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}

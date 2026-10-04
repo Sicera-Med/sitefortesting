@@ -37,7 +37,7 @@ def test_no_token_and_bad_token(client):
 
 def test_demo_users(client):
     users = client.get(f"{API}/auth/demo-users").json()
-    assert {u["role"] for u in users} == {"doctor", "head", "patient"}
+    assert {u["role"] for u in users} == {"doctor", "chief", "manager", "patient"}
     assert all(u["password"] == "demo" for u in users)
 
 
@@ -58,8 +58,10 @@ def test_doctor_scope_all_is_read_only_for_others(client, petrov):
     assert others and not any(i["can_act"] for i in others)
 
 
-def test_head_sees_all(client, head):
-    assert len(client.get(f"{API}/studies", headers=head).json()) == 15
+def test_chief_and_manager_see_all(client, chief, manager):
+    assert len(client.get(f"{API}/studies", headers=chief).json()) == 15
+    items = client.get(f"{API}/studies", headers=manager).json()
+    assert len(items) == 15 and not any(i["can_act"] for i in items)
 
 
 def test_patient_cannot_see_studies(client, kuznetsova):
@@ -82,9 +84,9 @@ def test_unknown_study_404(client, petrov):
 # --- Сквозной сценарий ---
 
 
-def test_seed_has_no_ai_answers(client, head):
+def test_seed_has_no_ai_answers(client, chief):
     """Ответы AI — только от сервиса; в seed их нет."""
-    items = client.get(f"{API}/studies", headers=head).json()
+    items = client.get(f"{API}/studies", headers=chief).json()
     assert all(i["ai"] is None for i in items)
 
 
@@ -193,14 +195,31 @@ def test_other_doctor_cannot_decide(client, petrov, sidorova):
     assert r.status_code == 403
 
 
-def test_head_cannot_decide(client, head):
-    study = _study(client, head, status="new", scope="all")
+def test_manager_cannot_decide(client, manager):
+    study = _study(client, manager, status="new", scope="all")
     r = client.post(
         f"{API}/studies/{study['id']}/decision",
-        headers=head,
+        headers=manager,
         json={"chosen_types": ["repeat_appointment"]},
     )
     assert r.status_code == 403
+
+
+def test_chief_decides_for_any_patient(client, chief, manager):
+    study = _study(client, chief, status="new", scope="all")
+    assert study["can_act"]
+    r = client.post(
+        f"{API}/studies/{study['id']}/decision",
+        headers=chief,
+        json={"chosen_types": ["repeat_appointment"]},
+    )
+    assert r.status_code == 200
+    card = client.get(f"{API}/studies/{study['id']}", headers=chief).json()
+    assert card["status"] == "notified"
+    # Решение засчитано главврачу, лечащий врач не меняется
+    assert card["doctor"]["id"] == study["doctor"]["id"]
+    d = client.get(f"{API}/metrics/dashboard", headers=manager).json()
+    assert any(row["full_name"].startswith("Смирнова") for row in d["by_doctor"])
 
 
 def test_manual_analyze_endpoint_removed(client, petrov):
@@ -264,11 +283,11 @@ def test_manual_ai_result_upload(client, petrov):
 # --- AI test bench и справочники ---
 
 
-def test_ai_test_bench(client, head):
+def test_ai_test_bench(client, chief):
     before = len(client.app.state.store.inferences)
     r = client.post(
         f"{API}/ai/test",
-        headers=head,
+        headers=chief,
         json={
             "report_text": "УЗИ щитовидной железы: узел TI-RADS 5 с микрокальцинатами",
             "study_type": "ultrasound",
