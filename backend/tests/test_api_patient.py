@@ -412,7 +412,7 @@ def test_dashboard_from_seed(client, manager):
     assert d["agreement"] == {"agreed": 0, "total": 0, "rate": None}
     assert d["details_agreement"]["total"] == 0
     assert sum(map(sum, d["confusion_matrix"]["matrix"])) == 0
-    assert d["summary"]["studies_total"] == 15
+    assert d["summary"]["studies_total"] == 16
     assert d["summary"]["decisions_total"] == 6
     assert d["summary"]["decisions_without_ai"] == 6
     assert d["latency"]["count"] == 0
@@ -424,7 +424,7 @@ def test_dashboard_from_seed(client, manager):
 def test_dashboard_updates_after_ai_and_decision(client, manager, petrov):
     analyze_all(client)
     d = client.get(f"{API}/metrics/dashboard", headers=manager).json()
-    assert d["latency"]["count"] == 9  # 9 исследований без решения проанализированы
+    assert d["latency"]["count"] == 10  # 10 исследований без решения проанализированы
 
     item = client.get(f"{API}/studies", params={"status": "ai_ready"}, headers=petrov).json()[0]
     rec = item["ai"]["recommendation"]
@@ -480,7 +480,16 @@ def test_no_pathology_closes_case(client, petrov, manager):
     card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
     # Уведомление ушло, записываться некуда — кейс сразу завершён
     assert card["status"] == "completed"
-    assert "патологии не выявлено" in card["notification"]["text"]
+    n = card["notification"]
+    assert "патологии не выявлено" in n["text"].lower()
+    # В каналы — коротко, без медицинских подробностей, со ссылкой на карточку на сайте
+    assert "патолог" not in n["short_text"].lower()
+    assert n["short_text"].endswith(f"/patient#n-{n['id']}")
+    # SMS — свой, ещё более короткий текст; остальные каналы — short_text
+    sms = {d["text"] for d in n["deliveries"] if d["channel"] == "sms"}
+    assert {d["text"] for d in n["deliveries"] if d["channel"] != "sms"} == {n["short_text"]}
+    assert len(sms) == 1 and sms.pop().startswith("Третье мнение: готов результат")
+    assert {d["status"] for d in n["deliveries"]} == {"simulated"}
     assert card["requirements"] == []
 
     accounts = client.get(f"{API}/auth/demo-users").json()
@@ -498,3 +507,23 @@ def test_no_pathology_closes_case(client, petrov, manager):
     d = client.get(f"{API}/metrics/dashboard", headers=manager).json()
     assert d["confusion_matrix"]["labels"][-1] == "no_pathology"
     assert "no_pathology" not in {n["recommendation"] for n in d["notifications"]}
+
+
+def test_dashboard_funnel_and_doctor_details(client, manager):
+    d = client.get(f"{API}/metrics/dashboard", headers=manager).json()
+    total = next(r for r in d["funnel"] if r["scope"] == "all")
+    # Seed: 6 уведомлений, все с направлениями; Морозова записана по всем,
+    # Иванов — по одному из двух
+    assert total["sent"] == 6
+    assert total["booked_all"] == 1 and total["booked_any"] == 2
+    assert total["read"] >= total["booked_any"]
+    assert {r["scope"] for r in d["funnel"]} == {
+        "all",
+        "repeat_appointment",
+        "specialist_consult",
+        "additional_research",
+    }
+    assert all("details_rate" in row for row in d["by_doctor"])
+    # Все 11 врачей, включая тех, у кого решений ещё нет; с решениями — сверху
+    assert len(d["by_doctor"]) == 11
+    assert d["by_doctor"][-1]["decisions"] == 0

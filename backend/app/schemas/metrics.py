@@ -40,6 +40,20 @@ class DoctorRow(Rate):
     full_name: str
     specialty: str | None
     decisions: int
+    details_agreed: int
+    details_total: int
+    details_rate: float | None  # полное совпадение с AI (тип + специалист/исследования)
+
+
+class FunnelRow(BaseModel):
+    """Воронка после уведомления; scope — "all" или тип направления."""
+
+    scope: str
+    sent: int
+    read: int
+    booked_any: int  # записались хотя бы по одному направлению
+    booked_all: int  # записались по всем
+    declined: int
 
 
 class NotificationRow(BaseModel):
@@ -74,4 +88,5 @@ class DashboardOut(BaseModel):
     latency: Latency
     by_doctor: list[DoctorRow]
     notifications: list[NotificationRow]
+    funnel: list[FunnelRow]
     recent_decisions: list[DecisionRow]

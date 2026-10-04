@@ -22,6 +22,7 @@ from app.domain.enums import (
     RecommendationType,
     Role,
     Sex,
+    SocialNetwork,
     StudyStatus,
     StudyType,
 )
@@ -29,13 +30,23 @@ from app.domain.models import (
     Appointment,
     AuditEvent,
     Decision,
+    Delivery,
     Notification,
     Patient,
+    Social,
     Study,
     User,
 )
-from app.domain.rules import all_covered, contact_channels
-from app.domain.texts import notification_text
+from app.domain.rules import (
+    MAX_REMINDERS,
+    REMINDER_INTERVAL,
+    all_covered,
+    contact_channels,
+    needs_booking,
+    needs_reminder,
+)
+from app.domain.sr import parse_sr
+from app.services.notifications import delivery_targets, patient_texts, reminder_for
 from app.store import Store
 
 DEMO_PASSWORD = "demo"
@@ -56,16 +67,27 @@ STAFF = [
     ("belova", "Белова Марина Юрьевна", "belova@clinic.demo", Role.DOCTOR, "oncologist"),
     ("gusev", "Гусев Павел Олегович", "gusev@clinic.demo", Role.DOCTOR, "gastroenterologist"),
     ("zakharov", "Захаров Игорь Валентинович", "zakharov@clinic.demo", Role.DOCTOR, "neurosurgeon"),
+    # Для направлений из справочника AI-команды (кардиомегалия, аорта, надпочечник, онкология)
+    ("egorova", "Егорова Светлана Павловна", "egorova@clinic.demo", Role.DOCTOR, "cardiologist"),
+    ("titov", "Титов Роман Евгеньевич", "titov@clinic.demo", Role.DOCTOR, "endocrinologist"),
+    ("frolov", "Фролов Денис Аркадьевич", "frolov@clinic.demo", Role.DOCTOR, "vascular_surgeon"),
+    ("zaitseva", "Зайцева Ирина Олеговна", "zaitseva@clinic.demo", Role.DOCTOR, "radiotherapist"),
 ]
 
 # --- Пациенты: (ключ, ФИО, email, дата рождения, пол, телефон) ---
 
 # Соцсети указали не все пациенты — у остальных уведомление уйдёт в SMS и email
-SOCIAL = {
-    "kuznetsova": "t.me/kuznetsova_e",
-    "sokolov": "t.me/m_sokolov",
-    "morozova": "vk.com/n.morozova",
-    "fedorova": "t.me/irina_fed",
+SOCIAL: dict[str, tuple[Social, ...]] = {
+    "kuznetsova": (
+        Social(SocialNetwork.TELEGRAM, "@kuznetsova_e"),
+        Social(SocialNetwork.VK, "vk.com/kuznetsova_e"),
+    ),
+    "sokolov": (
+        Social(SocialNetwork.TELEGRAM, "@m_sokolov"),
+        Social(SocialNetwork.WHATSAPP, "+7 900 100-00-05"),
+    ),
+    "morozova": (Social(SocialNetwork.VK, "vk.com/n.morozova"),),
+    "fedorova": (Social(SocialNetwork.TELEGRAM, "@irina_fed"),),
 }
 
 PATIENTS = [
@@ -175,13 +197,16 @@ class StudySpec:
     body_region: str
     status: StudyStatus
     days_ago: int
-    report_text: str
+    sr: str  # раздел «Описание» DICOM SR: строки «Поле- значение»
     decision: DecisionSpec | None = None
     notification: NotificationSpec | None = None
+    conclusion: str | None = None  # заключение рентгенолога (может отсутствовать)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
 STUDIES: list[StudySpec] = [
+    # Протоколы — раздел «Описание» DICOM SR по шаблонам БФТ («Поле- значение», как на
+    # thirdopinion.ai). Только типы с шаблоном/справочником AI-команды: КТ ОГК, РГ ОГК, ММГ, КТ ГМ.
     # ---------- КТ органов грудной клетки ----------
     StudySpec(
         patient="ivanov",
@@ -190,19 +215,26 @@ STUDIES: list[StudySpec] = [
         body_region="chest",
         status=S.NOTIFIED,
         days_ago=6,
-        report_text=(
-            "КТ органов грудной клетки без контрастирования.\n"
-            "В S6 правого лёгкого определяется солидный узел размерами 8×7 мм с ровными чёткими "
-            "контурами, плотностью +32 HU, без кальцинатов. Других очаговых и инфильтративных "
-            "изменений не выявлено. Трахея и главные бронхи проходимы. Внутригрудные лимфоузлы "
-            "не увеличены. Плевральные полости свободны.\n"
-            "Заключение: солидный узел S6 правого лёгкого 8 мм. С учётом анамнеза курения "
-            "(30 пачка/лет) — категория высокого риска по Fleischner."
+        # tests/tests.md AI-команды, ct_chest_101
+        sr="""Легочная ткань- очаг
+Правое легкое- в S6 солидный очаг 9 мм с четкими контурами
+Левое легкое- без очаговых и инфильтративных изменений
+Трахея и бронхи- не выявлено признаков патологии
+Плевральные полости- не выявлено признаков патологии
+Средостение- не выявлено признаков патологии
+Сердце и крупные сосуды- кальциноз коронарных артерий, Agatston 412, CAC-DRS 3
+Костные структуры- не выявлено признаков патологии
+Надпочечники- структурные изменения тела левого надпочечника, образование 18 мм, плотность 8 HU
+Щитовидная железа- образование правой доли 14 мм""",
+        conclusion=(
+            "Солидный очаг S6 правого легкого 9 мм. Выраженный кальциноз коронарных артерий "
+            "(CAC-DRS 3). Образование левого надпочечника 18 мм. Образование правой доли "
+            "щитовидной железы."
         ),
         decision=DecisionSpec(
             (R.SPECIALIST_CONSULT, R.ADDITIONAL_RESEARCH),
             {"specialists": ["pulmonologist"], "research_types": ["ct"]},
-            "Контрольная КТ через 3 месяца по Fleischner и консультация пульмонолога.",
+            "Контрольная КТ через 3 месяца и консультация пульмонолога.",
         ),
         # Записался к пульмонологу, на КТ — ещё нет: кейс открыт (1 из 2)
         notification=NotificationSpec(
@@ -216,15 +248,13 @@ STUDIES: list[StudySpec] = [
         body_region="chest",
         status=S.NOTIFIED,
         days_ago=5,
-        report_text=(
-            "КТ органов грудной клетки.\n"
-            "В нижней доле левого лёгкого (S9–S10) участки консолидации с воздушной "
-            "бронхограммой общим размером до 54×38 мм, по периферии — зона «матового стекла». "
-            "Небольшое количество жидкости в левой плевральной полости (до 8 мм). "
-            "Внутригрудные лимфоузлы до 11 мм.\n"
-            "Заключение: КТ-признаки левосторонней нижнедолевой пневмонии, малый левосторонний "
-            "гидроторакс."
-        ),
+        sr="""Легочная ткань- участки консолидации
+Левое легкое- в нижней доле (S9–S10) консолидация с воздушной бронхограммой 54×38 мм, по периферии зона «матового стекла»
+Правое легкое- без очаговых и инфильтративных изменений
+Плевральные полости- гидроторакс слева, толщина слоя до 8 мм
+Средостение- внутригрудные лимфоузлы до 11 мм
+Костные структуры- не выявлено признаков патологии""",
+        conclusion="КТ-признаки левосторонней нижнедолевой пневмонии, малый левосторонний гидроторакс.",
         decision=DecisionSpec(
             (R.REPEAT_APPOINTMENT, R.SPECIALIST_CONSULT),
             {"specialists": ["pulmonologist"]},
@@ -239,12 +269,16 @@ STUDIES: list[StudySpec] = [
         body_region="chest",
         status=S.NEW,
         days_ago=2,
-        report_text=(
-            "КТ органов грудной клетки.\n"
-            "Центрилобулярная эмфизема верхних долей обоих лёгких, единичные субплевральные "
-            "буллы до 12 мм. Стенки сегментарных бронхов утолщены. Очаговых и инфильтративных "
-            "изменений не выявлено. Лимфоузлы средостения не увеличены.\n"
-            "Заключение: КТ-картина эмфиземы лёгких, признаки хронического бронхита."
+        # tests/tests.md AI-команды, ct_chest_102
+        sr="""Легочная ткань- эмфизема верхних долей обоих легких, общий объем 18%
+Трахея и бронхи- бронхоэктазы в нижней доле правого легкого
+Плевральные полости- не выявлено признаков патологии
+Средостение- не выявлено признаков патологии
+Сердце и крупные сосуды- аневризма/дилатация грудной аорты: восходящая аорта 46 мм, нисходящая 31 мм
+Костные структуры- компрессионный перелом тела позвонка Th12, снижение высоты 32% (Genant 2)""",
+        conclusion=(
+            "Эмфизема легких. Бронхоэктазы нижней доли правого легкого. Дилатация восходящей "
+            "аорты до 46 мм. Компрессионный перелом Th12 (Genant 2)."
         ),
     ),
     StudySpec(
@@ -254,14 +288,12 @@ STUDIES: list[StudySpec] = [
         body_region="chest",
         status=S.NEW,
         days_ago=1,
-        report_text=(
-            "КТ органов грудной клетки, контроль через 3 месяца после перенесённой "
-            "COVID-19 пневмонии.\n"
-            "Ранее описанные участки «матового стекла» в обоих лёгких полностью регрессировали. "
-            "Остаточные тяжистые уплотнения в S10 справа. Очаговых и инфильтративных изменений "
-            "нет. Плевральные полости свободны.\n"
-            "Заключение: положительная динамика, полный регресс воспалительных изменений."
-        ),
+        sr="""Легочная ткань- участки «матового стекла» в обоих легких полностью регрессировали
+Правое легкое- остаточные тяжистые уплотнения в S10
+Левое легкое- без очаговых и инфильтративных изменений
+Плевральные полости- свободны
+Средостение- не выявлено признаков патологии""",
+        conclusion="Положительная динамика, полный регресс воспалительных изменений.",
     ),
     StudySpec(
         patient="volkov",
@@ -270,17 +302,51 @@ STUDIES: list[StudySpec] = [
         body_region="chest",
         status=S.NEW,
         days_ago=0,
-        report_text=(
-            "КТ органов грудной клетки с внутривенным контрастированием.\n"
-            "В верхней доле левого лёгкого (S1+2) образование 32×28 мм с неровными "
-            "спикулообразными контурами, неоднородно накапливающее контраст, с втяжением "
-            "висцеральной плевры. Увеличены лимфоузлы аортопульмонального окна до 15 мм и "
-            "бифуркационные до 13 мм.\n"
-            "Заключение: КТ-картина периферического образования левого лёгкого, подозрительного "
-            "на злокачественное (cT2aN2). Лимфаденопатия средостения."
+        # tests/tests.md AI-команды, ct_chest_103
+        sr="""Легочная ткань- очаг(и)
+Правое легкое- в S3 образование 27 мм с неровными контурами, множественные очаги до 6 мм в обоих легких
+Трахея и бронхи- сужение просвета верхнедолевого бронха справа
+Плевральные полости- гидроторакс справа, объем 250 мл
+Средостение- лимфоаденопатия ВГЛУ, наибольший лимфоузел 19 мм
+Костные структуры- не выявлено признаков патологии""",
+        conclusion=(
+            "Образование верхней доли правого легкого 27 мм с сужением верхнедолевого бронха. "
+            "Множественные очаги обоих легких. Лимфоаденопатия ВГЛУ. Правосторонний гидроторакс."
         ),
     ),
-    # ---------- Рентгенография ----------
+    StudySpec(
+        patient="ivanov",
+        doctor="petrov",
+        study_type=StudyType.CT,
+        body_region="chest",
+        status=S.NEW,
+        days_ago=2,
+        # tests/tests.md AI-команды, ct_chest_104: описания нет — только заключение
+        sr="",
+        conclusion=(
+            "Очаговых и инфильтративных изменений в легких не выявлено. В зоне сканирования — "
+            "образование тела левого надпочечника 16 мм, однородное, нативная плотность 4 HU. "
+            "Других патологических изменений не выявлено."
+        ),
+    ),
+    StudySpec(
+        patient="novikov",
+        doctor="sidorova",
+        study_type=StudyType.CT,
+        body_region="chest",
+        status=S.NEW,
+        days_ago=0,
+        # Пример со страницы заказчика thirdopinion.ai/chest_ct (tests/site_tests.md)
+        sr="""Очаги и образования легких- не обнаружены
+Снижение воздушности легких- не обнаружено
+Плевральный выпот- не обнаружен
+Грудная аорта- наибольшее значение диаметра восходящей части грудной аорты: 40 мм. Обнаружена дилатация восходящей части грудной аорты; наибольшее значение диаметра нисходящей части грудной аорты: 33 мм
+Легочный ствол- наибольший диаметр легочного ствола: 34 мм
+Коронарный кальций- кальциевый индекс (Agatston): 164; CAC DRS A2
+Паракардиальный жир- объем паракардиального жира: 387 мл, средняя плотность -96 HU
+Компрессионный перелом позвоночника- деформация тел позвонков более 25 % отсутствует""",
+    ),
+    # ---------- Рентгенография / флюорография ОГК ----------
     StudySpec(
         patient="sokolov",
         doctor="petrov",
@@ -288,32 +354,33 @@ STUDIES: list[StudySpec] = [
         body_region="chest",
         status=S.NEW,
         days_ago=1,
-        report_text=(
-            "Рентгенография органов грудной клетки в прямой проекции.\n"
-            "Лёгочные поля прозрачны, без очаговых и инфильтративных теней. Лёгочный рисунок "
-            "не изменён. Корни структурны. Синусы свободны. Диафрагма с чёткими контурами. "
-            "Тень сердца не расширена.\n"
-            "Заключение: патологических изменений органов грудной клетки не выявлено."
-        ),
+        sr="""Прозрачность легочных полей- сохранена
+Очаговые изменения- не выявлены
+Инфильтративные изменения- не выявлены
+Легочный рисунок- без особенностей
+Корни легких- структурны
+Синусы- свободны
+Диафрагма- контуры четкие
+Тень сердца- не расширена""",
+        conclusion="Патологических изменений органов грудной клетки не выявлено.",
     ),
     StudySpec(
         patient="morozova",
         doctor="petrov",
         study_type=StudyType.XRAY,
-        body_region="knee",
+        body_region="chest",
         status=S.COMPLETED,
         days_ago=9,
-        report_text=(
-            "Рентгенография правого коленного сустава в двух проекциях.\n"
-            "Суставная щель неравномерно сужена, больше в медиальном отделе. Краевые "
-            "остеофиты мыщелков бедренной и большеберцовой костей. Субхондральный склероз. "
-            "Заострение межмыщелковых возвышений.\n"
-            "Заключение: рентгенологические признаки гонартроза II стадии по Kellgren–Lawrence."
-        ),
+        sr="""Прозрачность легочных полей- сохранена
+Очаговые изменения- не выявлены
+Инфильтративные изменения- не выявлены
+Тень сердца- не расширена
+Костные структуры- несросшийся перелом заднего отрезка VII ребра справа со смещением отломков""",
+        conclusion="Несросшийся перелом VII ребра справа со смещением.",
         decision=DecisionSpec(
             (R.SPECIALIST_CONSULT,),
             {"specialists": ["orthopedist"]},
-            "Консультация ортопеда для решения о тактике лечения.",
+            "Консультация травматолога-ортопеда для решения о тактике лечения.",
         ),
         notification=NotificationSpec(
             read=True, bookings=(("specialist:orthopedist", "orlov", 3, 10),)
@@ -326,49 +393,95 @@ STUDIES: list[StudySpec] = [
         body_region="chest",
         status=S.NOTIFIED,
         days_ago=3,
-        report_text=(
-            "Рентгенография органов грудной клетки в двух проекциях.\n"
-            "Справа в нижнем лёгочном поле (S8–S9) инфильтрация лёгочной ткани средней "
-            "интенсивности без чётких контуров. Правый синус свободен. Корни структурны.\n"
-            "Заключение: правосторонняя нижнедолевая пневмония."
+        # tests/tests.md AI-команды, xray_101
+        sr="""Прозрачность легочных полей- снижена за счет инфильтрации/консолидации и признаков плеврального выпота
+Инфильтративные изменения- инфильтрация в нижней доле правого легкого
+Гидроторакс- плевральный выпот справа, синус справа затемнен
+Синусы- синус слева свободный
+Средостение- не изменено
+Тень сердца- расширена, КТИ 0,56
+Костные структуры- травматические изменения ребер не выявлены""",
+        conclusion=(
+            "Правосторонняя нижнедолевая инфильтрация. Правосторонний гидроторакс. Кардиомегалия."
         ),
         decision=DecisionSpec(
             (R.REPEAT_APPOINTMENT,),
             {},
-            "Клинически лёгкое течение. Контрольная рентгенография после курса антибиотиков, "
-            "КТ сейчас не нужна.",
+            "Клинически лёгкое течение. Контроль после курса антибиотиков, КТ сейчас не нужна.",
         ),
     ),
     StudySpec(
         patient="fedorova",
-        doctor="kim",
+        doctor="petrov",
         study_type=StudyType.XRAY,
-        body_region="spine",
+        body_region="chest",
+        status=S.NEW,
+        days_ago=1,
+        # Пример со страницы заказчика thirdopinion.ai/cxr (tests/site_tests.md)
+        sr="""Легкие- очаговых и инфильтративных изменений не обнаружено
+Костные структуры- обнаружен консолидированный перелом ребра
+Сердце- тень сердца расширена, КТИ = 0,6""",
+        conclusion="Очаговых и инфильтративных изменений не обнаружено. Кардиомегалия.",
+    ),
+    # ---------- Маммография ----------
+    StudySpec(
+        patient="lebedeva",
+        doctor="petrov",
+        study_type=StudyType.MAMMOGRAPHY,
+        body_region="breast",
+        status=S.NEW,
+        days_ago=0,
+        # tests/tests.md AI-команды, mmg_101
+        sr="""Качество исследования (PGMI)- G
+Правая молочная железа- плотность ACR C; кожа не изменена; кальцинаты подозрительные выявлены, верхне-наружный квадрант, сгруппированные (кластер); образования не выявлены; нарушение архитектоники не выявлено; аксиллярные лимфоузлы определяются, не изменены
+Левая молочная железа- плотность ACR C; кожа не изменена; кальцинаты доброкачественные выявлены; образования не выявлены; нарушение архитектоники не выявлено; аксиллярные лимфоузлы определяются, не изменены""",
+        conclusion="Правая молочная железа: BI-RADS 4. Левая молочная железа: BI-RADS 2.",
+    ),
+    StudySpec(
+        patient="vasilyeva",
+        doctor="petrov",
+        study_type=StudyType.MAMMOGRAPHY,
+        body_region="breast",
+        status=S.NEW,
+        days_ago=1,
+        # Пример со страницы заказчика thirdopinion.ai/mmg (tests/site_tests.md)
+        sr="""Качество исследования (PGMI)- G
+Правая молочная железа- плотность ACR A; кожа не изменена; кальцинаты доброкачественные выявлены; кальцинаты подозрительные выявлены — 25 x 21 мм и 14 x 10 мм, в структуре образования; образование 36 x 26 мм, верхне-внутренний квадрант; нарушение архитектоники не выявлено; аксиллярные лимфоузлы определяются, не изменены; втяжение соска, асимметрия плотности, отёк ткани не выявлены""",
+        conclusion="Правая молочная железа: BI-RADS 2.",
+    ),
+    # ---------- КТ головного мозга ----------
+    StudySpec(
+        patient="fedorova",
+        doctor="kim",
+        study_type=StudyType.CT,
+        body_region="head",
         status=S.NEW,
         days_ago=2,
-        report_text=(
-            "Рентгенография поясничного отдела позвоночника в двух проекциях.\n"
-            "Физиологический лордоз сглажен. Высота межпозвонковых дисков L4–L5, L5–S1 снижена. "
-            "Субхондральный склероз замыкательных пластинок, краевые костные разрастания "
-            "тел L4, L5. Листезов нет.\n"
-            "Заключение: остеохондроз поясничного отдела позвоночника L4–S1."
+        # Пример со страницы заказчика thirdopinion.ai/head_ct (tests/site_tests.md)
+        sr="""Смещение срединных структур- поперечное смещение 3 мм
+Внутричерепные кровоизлияния- признаки не обнаружены
+Ишемический инсульт- признаки не обнаружены
+Кистозно-глиозная трансформация- признаки обнаружены, срезы 52–95
+Вентрикуло-краниальные коэффициенты- ВКК1 26 %, ВКК2 16 %, ВКК3 7 %, ширина III желудочка 9 мм
+Миндалины мозжечка- выше края большого затылочного отверстия""",
+        conclusion=(
+            "КТ-картина кистозно-глиозной трансформации, смещение срединных структур 3 мм. "
+            "Геморрагических и ишемических изменений не выявлено."
         ),
     ),
-    # ---------- МРТ ----------
     StudySpec(
         patient="popov",
         doctor="kim",
-        study_type=StudyType.MRI,
+        study_type=StudyType.CT,
         body_region="head",
         status=S.NOTIFIED,
         days_ago=4,
-        report_text=(
-            "МРТ головного мозга.\n"
-            "В субкортикальном белом веществе лобных долей — единичные мелкие очаги "
-            "гиперинтенсивного сигнала на T2/FLAIR до 3 мм, без перифокального отёка. "
-            "Желудочки не расширены. Срединные структуры не смещены.\n"
-            "Заключение: МР-картина начальных проявлений микроангиопатии (Fazekas 1)."
-        ),
+        sr="""Смещение срединных структур- не выявлено
+Внутричерепные кровоизлияния- признаки не обнаружены
+Ишемический инсульт- признаки не обнаружены
+Белое вещество- перивентрикулярный лейкоареоз, единичные лакунарные очаги в базальных ядрах до 4 мм
+Желудочковая система- расширена умеренно, ВКК1 28 %""",
+        conclusion="КТ-признаки хронической ишемии головного мозга, умеренная заместительная гидроцефалия.",
         decision=DecisionSpec(
             (R.REPEAT_APPOINTMENT,),
             {},
@@ -378,84 +491,21 @@ STUDIES: list[StudySpec] = [
     StudySpec(
         patient="sokolov",
         doctor="kim",
-        study_type=StudyType.MRI,
-        body_region="spine",
+        study_type=StudyType.CT,
+        body_region="head",
         status=S.NOTIFIED,
-        days_ago=4,
-        report_text=(
-            "МРТ пояснично-крестцового отдела позвоночника.\n"
-            "Задняя парамедианная левосторонняя грыжа диска L5–S1 размером 7 мм с "
-            "компрессией левого корешка S1. Протрузия диска L4–L5 до 2 мм. "
-            "Позвоночный канал на уровне L5–S1 сужен до 10 мм.\n"
-            "Заключение: грыжа диска L5–S1 с компрессией корешка S1 слева."
-        ),
+        days_ago=9,  # уведомлён больше недели назад — уже было напоминание
+        sr="""Смещение срединных структур- смещение влево до 4 мм
+Внутричерепные кровоизлияния- признаки не обнаружены
+Объемные образования- экстрааксиальное образование правой лобной области 32 мм, широким основанием прилежит к твердой мозговой оболочке, перифокальный отек
+Ишемический инсульт- признаки не обнаружены""",
+        conclusion="КТ-картина объемного образования правой лобной области (вероятно, менингиома).",
         decision=DecisionSpec(
             (R.SPECIALIST_CONSULT,),
             {"specialists": ["neurosurgeon"]},
             "Консультация нейрохирурга: решить вопрос об оперативном лечении.",
         ),
         notification=NotificationSpec(read=True),
-    ),
-    StudySpec(
-        patient="lebedeva",
-        doctor="petrov",
-        study_type=StudyType.MRI,
-        body_region="knee",
-        status=S.NEW,
-        days_ago=0,
-        report_text=(
-            "МРТ левого коленного сустава.\n"
-            "В заднем роге медиального мениска линейный сигнал повышенной интенсивности, "
-            "достигающий нижней суставной поверхности (Stoller 3). Передняя крестообразная "
-            "связка не изменена. Умеренный выпот в верхнем завороте.\n"
-            "Заключение: разрыв заднего рога медиального мениска. Синовит."
-        ),
-    ),
-    # ---------- УЗИ ----------
-    StudySpec(
-        patient="vasilyeva",
-        doctor="petrov",
-        study_type=StudyType.ULTRASOUND,
-        body_region="abdomen",
-        status=S.NEW,
-        days_ago=1,
-        report_text=(
-            "УЗИ органов брюшной полости.\n"
-            "Печень увеличена: КВР правой доли 168 мм. Эхогенность паренхимы диффузно "
-            "повышена, сосудистый рисунок обеднён, дистальное затухание сигнала. Желчный пузырь "
-            "без конкрементов. Поджелудочная железа без особенностей. Селезёнка не увеличена.\n"
-            "Заключение: гепатомегалия, диффузные изменения печени по типу жирового гепатоза."
-        ),
-    ),
-    StudySpec(
-        patient="fedorova",
-        doctor="petrov",
-        study_type=StudyType.ULTRASOUND,
-        body_region="neck",
-        status=S.NEW,
-        days_ago=1,
-        report_text=(
-            "УЗИ щитовидной железы.\n"
-            "Общий объём 14,2 мл. В правой доле узел 14×11×10 мм, солидный, выраженно "
-            "гипоэхогенный, «выше, чем шире», с неровным контуром и точечными "
-            "микрокальцинатами. Регионарные лимфоузлы не увеличены.\n"
-            "Заключение: узел правой доли щитовидной железы, TI-RADS 5."
-        ),
-    ),
-    StudySpec(
-        patient="ivanov",
-        doctor="petrov",
-        study_type=StudyType.ULTRASOUND,
-        body_region="kidneys",
-        status=S.NEW,
-        days_ago=2,
-        report_text=(
-            "УЗИ почек.\n"
-            "Почки обычно расположены, размеры в норме. Паренхима 17 мм. В нижней группе "
-            "чашечек левой почки гиперэхогенное включение 6 мм с акустической тенью. "
-            "Чашечно-лоханочная система не расширена.\n"
-            "Заключение: конкремент левой почки 6 мм без нарушения уродинамики."
-        ),
     ),
 ]
 
@@ -478,11 +528,22 @@ def _slot(now: datetime, tz: ZoneInfo, days_ahead: int, hour: int, minute: int =
 
 
 class _Seeder:
-    def __init__(self, store: Store, now: datetime, tz: ZoneInfo, password_hash: str) -> None:
+    def __init__(
+        self,
+        store: Store,
+        now: datetime,
+        tz: ZoneInfo,
+        password_hash: str,
+        contact_phone: str = "",
+        contact_email: str = "",
+    ) -> None:
         self.store = store
         self.now = now
         self.tz = tz
         self.pw = password_hash
+        # Демо на сцене: у всех пациентов один телефон и почта — уведомления придут одному человеку
+        self.contact_phone = contact_phone
+        self.contact_email = contact_email or None
         self.users: dict[str, User] = {}
         self.patients: dict[str, Patient] = {}
 
@@ -531,8 +592,9 @@ class _Seeder:
                     full_name=name,
                     birth_date=birth,
                     sex=sex,
-                    phone=phone,
-                    social=SOCIAL.get(key),
+                    phone=self.contact_phone or phone,
+                    contact_email=self.contact_email,
+                    socials=SOCIAL.get(key, ()),
                 )
             )
         for spec in STUDIES:
@@ -564,7 +626,8 @@ class _Seeder:
                 status=spec.status,
                 performed_at=performed_at,
                 created_at=created_at,
-                report_text=spec.report_text,
+                sr_fields=tuple(parse_sr(spec.sr)[0]),
+                conclusion=spec.conclusion,
             )
         )
         self.audit(doctor, "study.created", study.id, created_at)
@@ -602,14 +665,17 @@ class _Seeder:
         # Уведомление уходит сразу после решения (во все доступные каналы)
         n = spec.notification or NotificationSpec()
         t += timedelta(seconds=1)
+        nid = new_id("nt")
+        text, short = patient_texts(self.store, decision, study, nid)
         notification = self.store.add_notification(
             Notification(
-                id=new_id("nt"),
+                id=nid,
                 decision_id=decision.id,
                 study_id=study.id,
                 patient_id=patient.id,
                 channels=contact_channels(patient, self.store.get_user(patient.user_id)),
-                text=notification_text(decision.chosen_types, decision.details),
+                text=text,
+                short_text=short.message,
                 status=NotificationStatus.SENT,
                 sent_at=t,
             )
@@ -662,9 +728,60 @@ class _Seeder:
         appointments = self.store.list_appointments(notification_id=notification.id)
         assert (study.status is S.COMPLETED) == all_covered(decision, appointments), spec.patient
 
+        # История отправок: первое уведомление и напоминания раз в неделю, пока пациент
+        # не записался (как делает services/reminders.py)
+        targets = delivery_targets(self.store, patient)
+        sent_at = notification.sent_at
+        notification.deliveries = [
+            Delivery(sent_at, c, target, 0, short.for_channel(c)) for c, target in targets
+        ]
+        if not needs_booking(decision):
+            return
+        due = sent_at + REMINDER_INTERVAL
+        while (
+            needs_reminder(notification, decision, appointments)
+            and notification.reminders_sent < MAX_REMINDERS
+            and due <= self.now
+        ):
+            notification.reminders_sent += 1
+            notification.deliveries += [
+                Delivery(
+                    due,
+                    c,
+                    target,
+                    notification.reminders_sent,
+                    reminder_for(self.store, notification).for_channel(c),
+                )
+                for c, target in targets
+            ]
+            self.audit(
+                None,
+                "notification.reminder",
+                study.id,
+                due,
+                notification_id=notification.id,
+                attempt=notification.reminders_sent,
+                of=MAX_REMINDERS,
+            )
+            due += REMINDER_INTERVAL
+        if needs_reminder(notification, decision, appointments):
+            notification.next_reminder_at = (
+                due if notification.reminders_sent < MAX_REMINDERS else None
+            )
 
-def seed_demo(store: Store, *, now: datetime | None = None, tz: str = "Europe/Moscow") -> None:
+
+def seed_demo(
+    store: Store,
+    *,
+    now: datetime | None = None,
+    tz: str = "Europe/Moscow",
+    contact_phone: str = "",
+    contact_email: str = "",
+) -> None:
+    """contact_phone / contact_email — общие контакты всех пациентов (DEMO_CONTACT_* в .env).
+
+    История доставок seed — всегда имитация: при старте ничего не отправляется."""
     now = now or datetime.now(UTC)
     # rounds=4: демо-пароль, а быстрый старт важнее стойкости хеша (bcrypt по умолчанию ~0.25 с)
     password_hash = hash_password(DEMO_PASSWORD, rounds=4)
-    _Seeder(store, now, ZoneInfo(tz), password_hash).run()
+    _Seeder(store, now, ZoneInfo(tz), password_hash, contact_phone, contact_email).run()

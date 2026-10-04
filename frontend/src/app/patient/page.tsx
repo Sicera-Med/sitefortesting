@@ -8,12 +8,16 @@ import {
   Circle,
   CircleCheck,
   ClipboardList,
+  MessageCircleQuestion,
+  Siren,
   Loader2,
-  Stethoscope,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { NotificationHistory } from "@/components/notification-history";
 import { BookingPanel } from "@/components/patient/booking-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +37,7 @@ import {
   useAppointments,
   useCancelAppointment,
   useDecline,
+  useExplain,
   useMarkRead,
   useMyNotifications,
 } from "@/lib/api/hooks";
@@ -75,13 +80,29 @@ function PatientCabinet() {
     }
   }, [notifications.data, markRead]);
 
+  // Переход с экрана «Исследования» (#n-<id>) — прокручиваем к нужной карточке, когда она есть
+  const hasData = !!notifications.data;
+  useEffect(() => {
+    if (!hasData || !window.location.hash) return;
+    document.querySelector(window.location.hash)?.scrollIntoView({ block: "start" });
+  }, [hasData]);
+
   const items = notifications.data ?? [];
-  // Сверху — где ещё нужна запись: не все направления закрыты записью
+  // На виду — только где ещё нужна запись, и новые (прочитаны в этот заход: пациент должен
+  // увидеть и «патологии не выявлено»). Остальное — в «Завершённых» и на экране «Исследования»
+  const [openedAt] = useState(() => Date.now());
   const needsAction = (n: PatientNotification) =>
     n.notification.patient_action !== "declined" &&
     !!n.booking &&
     n.booking.booked < n.booking.required;
-  const sortedItems = [...items].sort((a, b) => Number(needsAction(b)) - Number(needsAction(a)));
+  const isNew = (n: PatientNotification) =>
+    !n.notification.read_at || Date.parse(n.notification.read_at) >= openedAt - 5000;
+  const active = items.filter((n) => needsAction(n) || isNew(n));
+  const finished = items.filter((n) => !active.includes(n));
+  // Переход с экрана «Исследования» к завершённой рекомендации — сразу раскрываем список
+  const [showFinished, setShowFinished] = useState(
+    () => typeof window !== "undefined" && window.location.hash.startsWith("#n-"),
+  );
 
   return (
     <div className="mx-auto grid max-w-4xl gap-6">
@@ -102,16 +123,27 @@ function PatientCabinet() {
         {notifications.isError && (
           <p className="text-sm text-destructive">{errorMessage(notifications.error)}</p>
         )}
-        {notifications.data && !items.length && (
+        {notifications.data && !active.length && (
           <Card>
-            <CardContent className="py-8 text-center text-sm text-muted-foreground">
-              Новых рекомендаций нет
+            <CardContent className="py-8 text-center text-muted-foreground">
+              Новых рекомендаций нет — по всем вы записаны или они не требуют записи.
             </CardContent>
           </Card>
         )}
-        {sortedItems.map((n) => (
+        {active.map((n) => (
           <NotificationCard key={n.notification.id} item={n} />
         ))}
+        {finished.length > 0 && (
+          <Button
+            variant="outline"
+            className="justify-self-start"
+            onClick={() => setShowFinished((v) => !v)}
+          >
+            {showFinished ? <ChevronUp /> : <ChevronDown />}
+            {showFinished ? "Скрыть завершённые" : `Завершённые рекомендации (${finished.length})`}
+          </Button>
+        )}
+        {showFinished && finished.map((n) => <NotificationCard key={n.notification.id} item={n} />)}
       </section>
 
       <section className="grid gap-3">
@@ -119,7 +151,7 @@ function PatientCabinet() {
           <h2 className="flex items-center gap-2 text-xl font-medium">
             <ClipboardList className="size-5 text-primary" /> Мои записи
           </h2>
-          <Button variant="outline" size="sm" onClick={() => setBookingFree(true)}>
+          <Button size="lg" className="shadow-sm" onClick={() => setBookingFree(true)}>
             <CalendarPlus /> Записаться к врачу
           </Button>
         </div>
@@ -146,16 +178,17 @@ function NotificationCard({ item }: { item: PatientNotification }) {
   const [bookingKey, setBookingKey] = useState<string | null>(null);
   const n = item.notification;
   const open = !n.patient_action;
-  // Записаться нужно по каждому направлению; после отказа — нельзя
-  const canBook = n.patient_action !== "declined";
+  const declined = n.patient_action === "declined";
   const progress = item.booking;
   const done = !!progress && progress.booked === progress.required;
   // «Патологии не выявлено»: направлений нет — записываться не нужно
   const nothingToBook = item.requirements.length === 0;
+  const urgent = item.recommendations.includes("urgent_hospitalization");
+  const needsBooking = !declined && !done && !nothingToBook;
   const cancelled = item.appointments.filter((a) => a.status === "cancelled");
 
   return (
-    <Card className={cn(canBook && !done && !nothingToBook && "ring-2 ring-primary/30")}>
+    <Card id={`n-${n.id}`} className={cn(needsBooking && "ring-2 ring-primary/40")}>
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
@@ -164,103 +197,152 @@ function NotificationCard({ item }: { item: PatientNotification }) {
               {label("body_regions", item.study.body_region).toLowerCase()}
             </CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
-              исследование от {fmtDate(item.study.performed_at)}
+              исследование от {fmtDate(item.study.performed_at)} · лечащий врач{" "}
+              {item.treating_doctor.full_name}
             </p>
           </div>
           {open && <Badge>Новое</Badge>}
-          {canBook && progress && progress.booked > 0 && (
-            <Badge className={done ? "bg-emerald-100 text-emerald-800" : undefined}>
-              {done ? "Вы записаны" : `Записано ${progress.booked} из ${progress.required}`}
-            </Badge>
-          )}
-          {n.patient_action === "declined" && <Badge variant="secondary">Вы отказались</Badge>}
         </div>
       </CardHeader>
       <CardContent className="grid gap-4 text-sm">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Stethoscope className="size-4" />
-          Лечащий врач: {item.treating_doctor.full_name} (
-          {label("specialists", item.treating_doctor.specialty)})
-        </div>
-        {item.comment && (
-          <blockquote className="border-l-2 border-primary/40 pl-3 italic">
-            {item.comment}
-          </blockquote>
+        {/* Итог — крупно и сразу: что сказал врач и что делать пациенту */}
+        {urgent ? (
+          <Summary
+            tone="urgent"
+            icon={<Siren className="size-6" />}
+            title="Срочно обратитесь в стационар"
+          >
+            Врач рекомендует экстренную госпитализацию. При ухудшении самочувствия звоните 103 или
+            112.
+          </Summary>
+        ) : nothingToBook ? (
+          <Summary
+            tone="ok"
+            icon={<CircleCheck className="size-6" />}
+            title="Патологии не выявлено"
+          >
+            Записываться на приём не нужно.
+          </Summary>
+        ) : declined ? (
+          <Summary
+            tone="muted"
+            icon={<CalendarX className="size-6" />}
+            title="Вы отказались от записи"
+          >
+            Если передумаете — запишитесь к врачу в разделе «Мои записи».
+          </Summary>
+        ) : done ? (
+          <Summary
+            tone="ok"
+            icon={<CircleCheck className="size-6" />}
+            title="Вы записаны по всем направлениям"
+          >
+            Ждём вас на приёме.
+          </Summary>
+        ) : (
+          <Summary
+            tone="primary"
+            icon={<ClipboardList className="size-6" />}
+            title="Врач рекомендует записаться"
+          >
+            {item.requirements.map((r) => requirementLabel(r)).join(" · ")}
+            {progress && (
+              <div className="mt-3 grid gap-1">
+                <div className="flex justify-between text-xs">
+                  <span>
+                    Записано {progress.booked} из {progress.required}
+                  </span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-background">
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width]"
+                    style={{ width: `${(progress.booked / progress.required) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </Summary>
         )}
-        <p className="rounded-xl bg-background p-3 text-muted-foreground">
-          <span className="font-medium text-foreground">{channelsText(n.channels)}:</span> {n.text}
+
+        {/* Подробное сообщение врача — крупно; в SMS и мессенджеры ушло короткое со ссылкой */}
+        <p className="rounded-2xl bg-background p-4 text-base leading-relaxed whitespace-pre-line">
+          {n.text}
         </p>
 
-        {nothingToBook && (
-          <div className="flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-emerald-900">
-            <CircleCheck className="size-4 shrink-0" />
-            Патологии не выявлено — записываться на приём не нужно.
-          </div>
-        )}
-        <div className={cn("grid gap-2", nothingToBook && "hidden")}>
-          <h3 className="font-medium">
-            {canBook && !done ? "Запишитесь по каждому направлению" : "Направления врача"}
-          </h3>
-          {item.requirements.map((r) => (
-            <div key={r.key} className="grid gap-2">
-              <div
-                className={cn(
-                  "flex flex-wrap items-center justify-between gap-2 rounded-xl p-3",
-                  r.appointment_id ? "bg-emerald-50 text-emerald-900" : "bg-background",
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  {r.appointment_id ? (
-                    <CircleCheck className="size-4 shrink-0" />
-                  ) : (
-                    <Circle className="size-4 shrink-0 text-muted-foreground" />
-                  )}
-                  <div>
-                    <div className="font-medium">{requirementLabel(r)}</div>
-                    {r.appointment_id && r.scheduled_for ? (
-                      <div className="text-xs">
-                        {r.doctor ? `${r.doctor.full_name}, ` : ""}
-                        {fmtDateTime(r.scheduled_for)}
+        <Explanation item={item} />
+
+        {!nothingToBook && (
+          <div className="grid gap-2">
+            {item.requirements.map((r) => {
+              const booked = !!r.appointment_id;
+              return (
+                <div key={r.key} className="grid gap-2">
+                  <div
+                    className={cn(
+                      "flex flex-wrap items-center justify-between gap-3 rounded-xl p-3",
+                      booked
+                        ? "bg-emerald-50 text-emerald-900"
+                        : declined
+                          ? "bg-background"
+                          : "border-2 border-primary/40 bg-background",
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      {booked ? (
+                        <CircleCheck className="size-5 shrink-0" />
+                      ) : (
+                        <Circle className="size-5 shrink-0 text-muted-foreground" />
+                      )}
+                      <div>
+                        <div className="font-medium">{requirementLabel(r)}</div>
+                        {booked && r.scheduled_for ? (
+                          <div className="text-xs">
+                            {r.doctor ? `${r.doctor.full_name}, ` : ""}
+                            {fmtDateTime(r.scheduled_for)}
+                          </div>
+                        ) : (
+                          r.kind === "treating" &&
+                          r.doctor && (
+                            <div className="text-xs text-muted-foreground">
+                              {r.doctor.full_name}
+                            </div>
+                          )
+                        )}
                       </div>
-                    ) : (
-                      r.kind === "treating" &&
-                      r.doctor && (
-                        <div className="text-xs text-muted-foreground">{r.doctor.full_name}</div>
-                      )
+                    </div>
+                    {!declined && !booked && bookingKey !== r.key && (
+                      <Button size="lg" className="shadow-sm" onClick={() => setBookingKey(r.key)}>
+                        <CalendarPlus /> Записаться
+                      </Button>
                     )}
                   </div>
+                  {!declined && bookingKey === r.key && (
+                    <div className="rounded-2xl border bg-card p-4">
+                      <BookingPanel
+                        target={
+                          r.kind === "treating"
+                            ? { kind: "treating", doctor: item.treating_doctor }
+                            : { kind: r.kind, code: r.code! }
+                        }
+                        notificationId={n.id}
+                        requirement={r.key}
+                        onDone={() => setBookingKey(null)}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-2"
+                        onClick={() => setBookingKey(null)}
+                      >
+                        Отмена
+                      </Button>
+                    </div>
+                  )}
                 </div>
-                {canBook && !r.appointment_id && bookingKey !== r.key && (
-                  <Button size="sm" onClick={() => setBookingKey(r.key)}>
-                    <CalendarPlus /> Записаться
-                  </Button>
-                )}
-              </div>
-              {canBook && bookingKey === r.key && (
-                <div className="rounded-2xl border bg-card p-4">
-                  <BookingPanel
-                    target={
-                      r.kind === "treating"
-                        ? { kind: "treating", doctor: item.treating_doctor }
-                        : { kind: r.kind, code: r.code! }
-                    }
-                    notificationId={n.id}
-                    requirement={r.key}
-                    onDone={() => setBookingKey(null)}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="mt-2"
-                    onClick={() => setBookingKey(null)}
-                  >
-                    Отмена
-                  </Button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+              );
+            })}
+          </div>
+        )}
 
         {cancelled.map((a) => (
           <div
@@ -275,6 +357,23 @@ function NotificationCard({ item }: { item: PatientNotification }) {
           </div>
         ))}
 
+        {/* Уведомление и напоминания — по запросу, чтобы не отвлекать от итога */}
+        <details className="group rounded-xl bg-background p-3">
+          <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
+            <BellRing className="size-4 text-primary" />
+            Отправлено в {channelsText(n.channels)}
+            {n.reminders_sent > 0 && (
+              <span className="font-normal text-muted-foreground">
+                · напоминаний {n.reminders_sent}
+              </span>
+            )}
+            <ChevronDown className="ml-auto size-4 transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="mt-3 grid gap-3">
+            <NotificationHistory notification={n} />
+          </div>
+        </details>
+
         {open && !nothingToBook && (
           <div className="flex justify-end">
             <DeclineButton pending={decline.isPending} onConfirm={() => decline.mutate(n.id)} />
@@ -285,6 +384,86 @@ function NotificationCard({ item }: { item: PatientNotification }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+const SUMMARY_TONES = {
+  urgent: "bg-red-600 text-white",
+  primary: "bg-primary/10 text-foreground [&_svg]:text-primary",
+  ok: "bg-emerald-50 text-emerald-900",
+  muted: "bg-background text-muted-foreground",
+} as const;
+
+/** «Что значит ваше заключение» — B2C AI-команды; запрашивается один раз при открытии. */
+function Explanation({ item }: { item: PatientNotification }) {
+  const explain = useExplain();
+  const asked = useRef(false);
+  const id = item.notification.id;
+  const ready = item.explanation;
+  const { mutate } = explain;
+  useEffect(() => {
+    if (!ready && !asked.current) {
+      asked.current = true;
+      mutate(id);
+    }
+  }, [ready, id, mutate]);
+
+  return (
+    <section className="grid gap-2 rounded-2xl border bg-card p-4">
+      <h3 className="flex items-center gap-2 font-medium">
+        <MessageCircleQuestion className="size-5 text-primary" /> Что значит ваше заключение
+      </h3>
+      {ready ? (
+        <>
+          <p className="text-base leading-relaxed">{ready.summary}</p>
+          {ready.terms.length > 0 && (
+            <dl className="grid gap-1.5">
+              {ready.terms.map((t) => (
+                <div key={t.term}>
+                  <dt className="inline font-medium">{t.term}</dt>
+                  <dd className="inline text-muted-foreground"> — {t.explanation}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Объяснение подготовил AI-ассистент по тексту заключения. Решение о лечении принимает
+            врач.
+          </p>
+        </>
+      ) : explain.isError ? (
+        <p className="text-muted-foreground">
+          Объяснение пока недоступно. Рекомендации врача — ниже.
+        </p>
+      ) : (
+        <p className="inline-flex items-center gap-2 text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" /> Готовим объяснение простым языком…
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** Крупный итог карточки: что сказал врач и что делать пациенту. */
+function Summary({
+  tone,
+  icon,
+  title,
+  children,
+}: {
+  tone: keyof typeof SUMMARY_TONES;
+  icon: React.ReactNode;
+  title: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className={cn("flex gap-3 rounded-2xl p-4", SUMMARY_TONES[tone])}>
+      <span className="shrink-0">{icon}</span>
+      <div className="min-w-0 flex-1">
+        <div className="text-lg font-medium">{title}</div>
+        {children && <div className="mt-0.5">{children}</div>}
+      </div>
+    </div>
   );
 }
 

@@ -16,6 +16,7 @@ const ACTION_LABELS: Record<string, string> = {
   "decision.created": "Решение врача",
   "notification.sent": "Уведомление отправлено",
   "notification.read": "Пациент прочитал уведомление",
+  "notification.reminder": "Напоминание пациенту",
   "patient.booked": "Пациент записался",
   "patient.declined": "Пациент отказался",
   "appointment.created": "Создана запись",
@@ -41,6 +42,11 @@ export function Timeline({ studyId }: { studyId: string }) {
               <span className="absolute top-1.5 -left-[25px] size-2.5 rounded-full border-2 border-background bg-primary" />
               <div className="font-medium">
                 {ACTION_LABELS[e.action] ?? e.action}
+                {e.action === "notification.reminder" && (
+                  <span className="font-normal text-muted-foreground">
+                    {` · ${e.payload.attempt} из ${e.payload.of}`}
+                  </span>
+                )}
                 {e.action === "ai.failed" && (
                   <span className="font-normal text-muted-foreground">
                     {e.payload.manual

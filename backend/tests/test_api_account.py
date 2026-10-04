@@ -24,12 +24,31 @@ def test_patient_contacts_and_email(client, kuznetsova):
     r = client.patch(
         f"{API}/account",
         headers=kuznetsova,
-        json={"email": "kuz@patient.demo", "social": "", "phone": "+7 999 111-22-33"},
+        json={"email": "kuz@patient.demo", "socials": [], "phone": "+7 999 111-22-33"},
     )
     assert r.status_code == 200, r.text
     me = r.json()
-    assert me["email"] == "kuz@patient.demo" and me["social"] is None
+    assert me["email"] == "kuz@patient.demo" and me["socials"] == []
     assert me["available_channels"] == ["sms", "email"]
+
+    # Несколько соцсетей: пустые отбрасываются, повторы схлопываются
+    r = client.patch(
+        f"{API}/account",
+        headers=kuznetsova,
+        json={
+            "socials": [
+                {"network": "telegram", "handle": " @kuz "},
+                {"network": "telegram", "handle": "@KUZ"},
+                {"network": "max", "handle": "+7 999 111-22-33"},
+                {"network": "vk", "handle": "  "},
+            ]
+        },
+    )
+    assert r.json()["socials"] == [
+        {"network": "telegram", "handle": "@kuz"},
+        {"network": "max", "handle": "+7 999 111-22-33"},
+    ]
+    assert "social" in r.json()["available_channels"]
     login(client, "kuz@patient.demo")  # вход по новому email
 
 

@@ -1,24 +1,62 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
+from datetime import datetime
 
 from app.core.clock import utcnow
-from app.core.errors import ConflictError, ForbiddenError, InvalidTransitionError, NotFoundError
+from app.core.config import get_settings
+from app.core.errors import (
+    ConflictError,
+    ForbiddenError,
+    InvalidTransitionError,
+    NotFoundError,
+    TooManyRequestsError,
+)
 from app.core.ids import new_id
 from app.domain import rules
 from app.domain.enums import (
     AppointmentStatus,
+    NotificationChannel,
     NotificationStatus,
     PatientActionType,
+    RecommendationType,
     StudyStatus,
 )
-from app.domain.models import Appointment, Decision, Notification, Patient, Study, User
-from app.domain.texts import notification_text
-from app.services import audit
+from app.domain.models import (
+    Appointment,
+    Decision,
+    Delivery,
+    Notification,
+    Patient,
+    Study,
+    User,
+)
+from app.domain.texts import (
+    SOCIAL_LABELS,
+    notification_text,
+    reminder_text,
+    short_text,
+    sms_reminder_text,
+    sms_text,
+    study_title,
+)
+from app.services import audit, channels
 from app.store import Store
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class OutgoingText:
+    """Что уходит в каналы: email / соцсеть — коротко со ссылкой, SMS — ещё короче."""
+
+    message: str
+    sms: str
+
+    def for_channel(self, channel: NotificationChannel) -> str:
+        return self.sms if channel is NotificationChannel.SMS else self.message
 
 
 @dataclass(slots=True)
@@ -28,6 +66,17 @@ class RequirementView:
     requirement: rules.Requirement
     appointment: Appointment | None
     doctor: User | None  # врач записи; для повторного приёма до записи — лечащий врач
+
+
+@dataclass(slots=True)
+class PatientStudyView:
+    """Исследование глазами пациента: решение и уведомление — только когда уведомление ушло."""
+
+    study: Study
+    treating_doctor: User
+    decision: Decision | None
+    notification: Notification | None
+    requirements: list[RequirementView]
 
 
 @dataclass(slots=True)
@@ -47,7 +96,7 @@ class NotificationService:
     # --- Автоотправка после решения врача ---
 
     def notify(self, user: User, decision: Decision) -> Notification:
-        """Уведомить пациента по решению — во все доступные каналы (мок-адаптер)."""
+        """Уведомить пациента по решению — во все доступные каналы (через очередь outbox)."""
         study = self.store.get_study(decision.study_id)
         if self.store.notification_for_decision(decision.id) is not None:
             raise ConflictError("Уведомление по этому решению уже отправлено")
@@ -58,21 +107,25 @@ class NotificationService:
             )
         patient = self.store.get_patient(study.patient_id)
         channels = rules.contact_channels(patient, self.store.get_user(patient.user_id))
+        now = utcnow()
+        nid = new_id("nt")
+        text, short = patient_texts(self.store, decision, study, nid)
         notification = self.store.add_notification(
             Notification(
-                id=new_id("nt"),
+                id=nid,
                 decision_id=decision.id,
                 study_id=study.id,
                 patient_id=patient.id,
                 channels=channels,
-                text=notification_text(decision.chosen_types, decision.details),
+                text=text,
+                short_text=short.message,
                 status=NotificationStatus.SENT,
-                sent_at=utcnow(),
+                sent_at=now,
             )
         )
-        # Мок-адаптер: реальной отправки нет, только лог
-        for channel in channels:
-            logger.info("MOCK %s to %s: %s", channel, patient.full_name, notification.text)
+        deliver(self.store, notification, attempt=0, text=short, at=now)
+        if rules.needs_booking(decision):
+            notification.next_reminder_at = now + rules.REMINDER_INTERVAL
         study.status = StudyStatus.NOTIFIED
         audit.record(
             self.store,
@@ -88,6 +141,34 @@ class NotificationService:
         return notification
 
     # --- Пациент ---
+
+    # --- Врач: «Напомнить сейчас» ---
+
+    def remind(self, user: User, notification_id: str, *, cooldown_s: float = 0) -> Notification:
+        """Следующее напоминание сразу, не дожидаясь недели (для демо на сцене)."""
+        notification = self.store.get_notification(notification_id)
+        if notification is None:
+            raise NotFoundError("Уведомление не найдено")
+        study = self.store.get_study(notification.study_id)
+        if not rules.is_responsible(user, study):
+            raise ForbiddenError("Напомнить может лечащий врач или главврач")
+        decision = self.store.get_decision(notification.decision_id)
+        appointments = self.store.list_appointments(notification_id=notification.id)
+        if not rules.needs_reminder(notification, decision, appointments):
+            raise ConflictError("Напоминать не о чем: пациент записался или отказался")
+        if notification.reminders_sent >= rules.MAX_REMINDERS:
+            raise ConflictError(f"Все {rules.MAX_REMINDERS} напоминания уже отправлены")
+        now = utcnow()
+        last = max((d.at for d in notification.deliveries), default=None)
+        if last is not None:
+            wait = cooldown_s - (now - last).total_seconds()
+            if wait > 0:
+                raise TooManyRequestsError(
+                    f"Напомнить снова можно через {math.ceil(wait)} с",
+                    details={"retry_after_s": math.ceil(wait)},
+                )
+        send_reminder(self.store, notification, now, actor=user)
+        return notification
 
     def _patient(self, user: User) -> Patient:
         patient = self.store.patient_by_user(user.id)
@@ -123,6 +204,35 @@ class NotificationService:
         patient = self._patient(user)
         return [self._view(n) for n in self.store.notifications_for_patient(patient.id)]
 
+    def patient_studies(self, user: User) -> list[PatientStudyView]:
+        """Все исследования пациента — и те, по которым врач ещё не решил. Без протокола."""
+        patient = self._patient(user)
+        result = []
+        for study in self.store.list_studies(patient_id=patient.id):
+            decision = self.store.decision_for_study(study.id)
+            notification = self.store.notification_for_decision(decision.id) if decision else None
+            treating = self.store.get_user(study.treating_doctor_id)
+            requirements = (
+                requirement_views(
+                    self.store,
+                    decision,
+                    self.store.list_appointments(notification_id=notification.id),
+                    treating,
+                )
+                if decision and notification
+                else []
+            )
+            result.append(
+                PatientStudyView(
+                    study=study,
+                    treating_doctor=treating,
+                    decision=decision if notification else None,
+                    notification=notification,
+                    requirements=requirements,
+                )
+            )
+        return sorted(result, key=lambda v: v.study.performed_at, reverse=True)
+
     def mark_read(self, user: User, notification_id: str) -> PatientNotificationView:
         notification = self.own_notification(user, notification_id)
         if notification.read_at is None:
@@ -150,6 +260,7 @@ class NotificationService:
             notification.read_at = now
             notification.status = NotificationStatus.READ
         complete_study(self.store, notification.study_id)
+        notification.next_reminder_at = None  # отказался — не напоминаем
         audit.record(
             self.store,
             user,
@@ -158,6 +269,114 @@ class NotificationService:
             notification_id=notification.id,
         )
         return self._view(notification)
+
+
+def notification_url(notification_id: str) -> str:
+    """Ссылка из SMS / email / соцсети — на карточку рекомендации в кабинете."""
+    return f"{get_settings().SITE_URL.rstrip('/')}/patient#n-{notification_id}"
+
+
+def patient_texts(
+    store: Store, decision: Decision, study: Study, notification_id: str
+) -> tuple[str, OutgoingText]:
+    """(подробный текст для сайта, короткие со ссылкой — для каналов)."""
+    patient = store.get_patient(study.patient_id)
+    doctor = store.get_user(decision.doctor_id)
+    title = study_title(study.study_type, study.body_region)
+    detailed = notification_text(
+        decision.chosen_types,
+        decision.details,
+        patient_name=patient.full_name,
+        doctor_name=doctor.full_name,
+        study=title,
+        performed=study.performed_at.date(),
+    )
+    urgent = RecommendationType.URGENT_HOSPITALIZATION in decision.chosen_types
+    url = notification_url(notification_id)
+    return detailed, OutgoingText(
+        short_text(patient.full_name, title, url, urgent=urgent), sms_text(url, urgent=urgent)
+    )
+
+
+def reminder_for(store: Store, notification: Notification) -> OutgoingText:
+    study = store.get_study(notification.study_id)
+    patient = store.get_patient(notification.patient_id)
+    url = notification_url(notification.id)
+    return OutgoingText(
+        reminder_text(patient.full_name, study_title(study.study_type, study.body_region), url),
+        sms_reminder_text(url),
+    )
+
+
+def send_reminder(
+    store: Store, notification: Notification, now: datetime, *, actor: User | None
+) -> None:
+    """Очередное напоминание: по расписанию (actor=None) или кнопкой врача."""
+    notification.reminders_sent += 1
+    deliver(
+        store,
+        notification,
+        attempt=notification.reminders_sent,
+        text=reminder_for(store, notification),
+        at=now,
+    )
+    notification.next_reminder_at = (
+        now + rules.REMINDER_INTERVAL if notification.reminders_sent < rules.MAX_REMINDERS else None
+    )
+    audit.record(
+        store,
+        actor,
+        "notification.reminder",
+        target_id=notification.study_id,
+        notification_id=notification.id,
+        attempt=notification.reminders_sent,
+        of=rules.MAX_REMINDERS,
+        manual=actor is not None,
+    )
+
+
+def delivery_targets(store: Store, patient: Patient) -> list[tuple[NotificationChannel, str]]:
+    """Куда уходит уведомление: (канал, адрес) по всем включённым контактам пациента."""
+    user = store.get_user(patient.user_id)
+    targets: list[tuple[NotificationChannel, str]] = []
+    for channel in rules.contact_channels(patient, user):
+        match channel:
+            case NotificationChannel.SMS:
+                targets.append((channel, patient.phone))
+            case NotificationChannel.EMAIL:
+                targets.append((channel, patient.contact_email or user.email))
+            case NotificationChannel.SOCIAL:
+                targets += [
+                    (channel, f"{SOCIAL_LABELS.get(s.network, s.network)} {s.handle}")
+                    for s in patient.socials
+                ]
+    return targets
+
+
+def deliver(
+    store: Store, notification: Notification, *, attempt: int, text: OutgoingText, at: datetime
+) -> list[Delivery]:
+    """Доставки по всем контактам пациента: настоящие — в очередь outbox, остальные — имитация."""
+    settings = get_settings()
+    patient = store.get_patient(notification.patient_id)
+    sent = []
+    for channel, target in delivery_targets(store, patient):
+        status, detail = channels.plan(settings, channel)
+        body = text.for_channel(channel)
+        logger.info("%s %s to %s (%s): %s", status, channel, target, patient.full_name, body)
+        sent.append(
+            Delivery(
+                at=at,
+                channel=channel,
+                target=target,
+                attempt=attempt,
+                text=body,
+                status=status,
+                detail=detail,
+            )
+        )
+    notification.deliveries.extend(sent)
+    return sent
 
 
 def requirement_views(

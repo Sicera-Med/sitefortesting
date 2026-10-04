@@ -88,16 +88,7 @@ function StudyView() {
         {/* Слева — рекомендация AI и заключение, справа — что делает врач */}
         <div className="grid gap-4">
           <AIPanel study={study} />
-          <Card>
-            <CardHeader>
-              <CardTitle>Заключение</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="max-h-[50vh] overflow-y-auto text-sm leading-relaxed whitespace-pre-wrap">
-                {study.report_text}
-              </div>
-            </CardContent>
-          </Card>
+          <SRProtocol study={study} />
         </div>
 
         <div className="grid gap-4">
@@ -135,5 +126,34 @@ function ReassignControl({ study }: { study: StudyCard }) {
         <span className="text-xs text-destructive">{errorMessage(reassign.error)}</span>
       )}
     </span>
+  );
+}
+
+/** Протокол как он пришёл: раздел «Описание» DICOM SR (поля БФТ) и заключение рентгенолога. */
+function SRProtocol({ study }: { study: StudyCard }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Протокол (DICOM SR)</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-4 text-sm">
+        {study.sr_fields.length > 0 ? (
+          <dl className="grid max-h-[50vh] gap-x-4 gap-y-2 overflow-y-auto sm:grid-cols-[minmax(9rem,14rem)_1fr]">
+            {study.sr_fields.map((f, i) => (
+              <div key={i} className="contents">
+                <dt className="text-muted-foreground">{f.name}</dt>
+                <dd className="font-medium">{f.value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="text-muted-foreground">Описания в протоколе нет — только заключение.</p>
+        )}
+        <div className="rounded-xl bg-background p-3">
+          <div className="text-xs font-medium text-muted-foreground">Заключение рентгенолога</div>
+          <p className="mt-1">{study.conclusion ?? "Заключения в протоколе нет"}</p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

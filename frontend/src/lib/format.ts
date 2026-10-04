@@ -12,6 +12,7 @@ import type {
   NotificationChannel,
   RecommendationDetails,
   RecommendationType,
+  SocialNetwork,
   StudyStatus,
 } from "./api/types";
 
@@ -28,7 +29,15 @@ export const RECOMMENDATION_LABELS: Record<RecommendationType, string> = {
   repeat_appointment: "Повторный приём",
   specialist_consult: "Консультация специалиста",
   additional_research: "Дополнительное исследование",
+  urgent_hospitalization: "Экстренная госпитализация",
   no_pathology: "Патологии не выявлено",
+};
+
+export const SOCIAL_LABELS: Record<SocialNetwork, string> = {
+  telegram: "Telegram",
+  vk: "VK",
+  whatsapp: "WhatsApp",
+  max: "MAX",
 };
 
 export const RECOMMENDATION_TYPES = Object.keys(RECOMMENDATION_LABELS) as RecommendationType[];
@@ -146,4 +155,16 @@ export function useAppointmentTarget() {
     a.doctor
       ? `${a.doctor.full_name} (${label("specialists", a.doctor.specialty)})`
       : label("research_types", a.research_type);
+}
+
+/** Что за запись: направление из решения врача или свободная запись. */
+export function useRequirementText() {
+  const requirementLabel = useRequirementLabel();
+  return (a: { requirement: string | null }) =>
+    a.requirement
+      ? requirementLabel({
+          kind: a.requirement.split(":")[0] as Requirement["kind"],
+          code: a.requirement.split(":")[1] ?? null,
+        })
+      : "Запись без направления";
 }

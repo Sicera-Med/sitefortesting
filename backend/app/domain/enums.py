@@ -34,6 +34,7 @@ class RecommendationType(StrEnum):
     REPEAT_APPOINTMENT = "repeat_appointment"
     SPECIALIST_CONSULT = "specialist_consult"
     ADDITIONAL_RESEARCH = "additional_research"
+    URGENT_HOSPITALIZATION = "urgent_hospitalization"  # срочно в стационар — без записи
     NO_PATHOLOGY = "no_pathology"  # патологии не выявлено — действий не требуется
 
 
@@ -47,6 +48,20 @@ class NotificationChannel(StrEnum):
     SMS = "sms"
     EMAIL = "email"
     SOCIAL = "social"
+
+
+class DeliveryStatus(StrEnum):
+    PENDING = "pending"  # в очереди на отправку (services/outbox.py)
+    SENT = "sent"  # ушло через SMSPilot / SMTP
+    FAILED = "failed"  # канал вернул ошибку
+    SIMULATED = "simulated"  # имитация: настоящая отправка выключена или не настроена
+
+
+class SocialNetwork(StrEnum):
+    TELEGRAM = "telegram"
+    VK = "vk"
+    WHATSAPP = "whatsapp"
+    MAX = "max"
 
 
 class NotificationStatus(StrEnum):

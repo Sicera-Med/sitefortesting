@@ -71,6 +71,9 @@ class Store:
     def get_patient(self, patient_id: str) -> Patient | None:
         return self.patients.get(patient_id)
 
+    def list_patients(self) -> list[Patient]:
+        return sorted(self.patients.values(), key=lambda p: p.full_name)
+
     def patient_by_user(self, user_id: str) -> Patient | None:
         return next((p for p in self.patients.values() if p.user_id == user_id), None)
 

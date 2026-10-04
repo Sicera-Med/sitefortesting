@@ -54,6 +54,26 @@ class Settings(BaseSettings):
     AI_MAX_AUTO_ATTEMPTS: int = Field(default=3, ge=1)  # потом — только ручная отправка
     # Ручная отправка одного исследования — не чаще раза в AI_SEND_COOLDOWN_S (бережём кредиты)
     AI_SEND_COOLDOWN_S: float = Field(default=10, ge=0)
+    # Напоминания пациенту (раз в неделю, до 3 раз) — фоновый воркер; в тестах выключен
+    NOTIFY_REMINDERS: bool = True
+    # Адрес сайта для ссылок в SMS / email / соцсетях (на сцене — доступный с телефона)
+    SITE_URL: str = "http://localhost:3000"
+    # Настоящие рассылки (services/channels.py). false — всё имитируется, как раньше
+    NOTIFY_REAL: bool = False
+    NOTIFY_SMS: bool = True  # при NOTIFY_REAL: SMS через SMSPilot
+    NOTIFY_EMAIL: bool = True  # при NOTIFY_REAL: email через SMTP
+    NOTIFY_OUTBOX: bool = True  # фоновая очередь отправки; в тестах выключена
+    NOTIFY_OUTBOX_POLL_S: float = Field(default=2, gt=0)  # очередь отправки
+    NOTIFY_REMIND_COOLDOWN_S: float = Field(default=10, ge=0)  # «Напомнить сейчас»
+    SMSPILOT_API_KEY: str = ""
+    SMSPILOT_FROM: str = ""  # имя отправителя; пусто — по умолчанию SMSPilot
+    SMTP_HOST: str = "smtp.yandex.ru"
+    SMTP_PORT: int = 465  # SSL
+    SMTP_USER: str = ""  # ящик Яндекса, он же отправитель
+    SMTP_PASSWORD: str = ""  # пароль приложения Яндекса
+    # Демо: контакты всех пациентов seed (уведомления придут одному человеку)
+    DEMO_CONTACT_PHONE: str = ""
+    DEMO_CONTACT_EMAIL: str = ""
     AI_HIGH_CONFIDENCE: float = Field(default=0.7, ge=0, le=1)
 
     # --- Клиника ---

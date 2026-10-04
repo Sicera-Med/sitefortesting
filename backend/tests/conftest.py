@@ -17,6 +17,15 @@ def _test_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("AI_AUTO_ANALYZE", "false")
     # Ограничение частоты ручной отправки проверяется отдельным тестом
     monkeypatch.setenv("AI_SEND_COOLDOWN_S", "0")
+    monkeypatch.setenv("NOTIFY_REMINDERS", "false")  # напоминания гоняем вручную
+    # Настоящих SMS и писем из тестов не бывает: очередь — вручную, ключи пустые
+    monkeypatch.setenv("NOTIFY_OUTBOX", "false")
+    monkeypatch.setenv("NOTIFY_REAL", "false")
+    monkeypatch.setenv("NOTIFY_REMIND_COOLDOWN_S", "0")
+    for key in ("SMSPILOT_API_KEY", "SMTP_USER", "SMTP_PASSWORD"):
+        monkeypatch.setenv(key, "")
+    monkeypatch.setenv("DEMO_CONTACT_PHONE", "")
+    monkeypatch.setenv("DEMO_CONTACT_EMAIL", "")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

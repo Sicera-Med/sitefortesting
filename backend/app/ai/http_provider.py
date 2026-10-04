@@ -7,10 +7,11 @@ from typing import Any
 import httpx
 
 from app.ai.base import AIProviderError
-from app.ai.contract import AIRequest
+from app.ai.contract import AIRequest, ExplainRequest
 from app.domain.enums import AISource
 
 ANALYZE_PATH = "/ai/v1/analyze"
+EXPLAIN_PATH = "/ai/v1/explain"
 
 
 def _error_text(response: httpx.Response) -> str:
@@ -34,8 +35,11 @@ class HttpAIProvider:
         self._client = client or httpx.AsyncClient(base_url=base_url, timeout=timeout_s)
 
     async def analyze(self, request: AIRequest) -> Any:
+        return await self._post(ANALYZE_PATH, request.model_dump(mode="json"))
+
+    async def _post(self, path: str, payload: dict[str, Any]) -> Any:
         try:
-            response = await self._client.post(ANALYZE_PATH, json=request.model_dump(mode="json"))
+            response = await self._client.post(path, json=payload)
         except httpx.TimeoutException as exc:
             raise AIProviderError("AI service timeout") from exc
         except httpx.HTTPError as exc:
@@ -47,6 +51,9 @@ class HttpAIProvider:
             return response.json()
         except ValueError as exc:
             raise AIProviderError("AI service returned invalid JSON") from exc
+
+    async def explain(self, request: ExplainRequest) -> Any:
+        return await self._post(EXPLAIN_PATH, request.model_dump(mode="json"))
 
     async def list_models(self) -> list[dict[str, str]]:
         # Отдельного эндпоинта моделей в контракте нет — модель видна в каждом ответе

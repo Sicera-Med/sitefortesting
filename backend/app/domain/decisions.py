@@ -14,16 +14,22 @@ def _codes(details: dict[str, Any], key: str, legacy: str) -> Any:
     return value
 
 
+# Исходы, которые не сочетаются с другими направлениями
+EXCLUSIVE_TYPES = (RecommendationType.NO_PATHOLOGY, RecommendationType.URGENT_HOSPITALIZATION)
+
+
 def normalize_chosen(raw: Any) -> tuple[RecommendationType, ...]:
     """Выбранные врачом варианты без повторов, в порядке справочника.
 
-    Направлений — от одного до трёх; «патологии не выявлено» — только отдельно.
+    Направлений — от одного до трёх; «патологии не выявлено» и «экстренная госпитализация» —
+    только отдельно.
     """
     if not isinstance(raw, list | tuple) or not raw:
         raise ValueError("chosen_types must be a non-empty list")
     chosen = {RecommendationType(t) for t in raw}
-    if RecommendationType.NO_PATHOLOGY in chosen and len(chosen) > 1:
-        raise ValueError("no_pathology cannot be combined with other options")
+    for single in EXCLUSIVE_TYPES:
+        if single in chosen and len(chosen) > 1:
+            raise ValueError(f"{single} cannot be combined with other options")
     return tuple(t for t in RecommendationType if t in chosen)
 
 

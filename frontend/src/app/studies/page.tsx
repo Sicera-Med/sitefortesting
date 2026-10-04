@@ -1,10 +1,11 @@
 "use client";
 
 import { Archive, ChevronDown, ChevronUp, Loader2, Lock, Search } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { NewStudyButton } from "@/components/study/new-study-dialog";
 import { AgreementBadge, AIBadge, StatusBadge } from "@/components/study-badges";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -20,12 +21,12 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { errorMessage } from "@/lib/api/client";
 import { useStudies } from "@/lib/api/hooks";
-import type { StudyStatus } from "@/lib/api/types";
+import type { StudyListItem, StudyStatus } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth";
 import { fmtDate, STATUS_LABELS, useLabels } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type View = "work" | "archive";
+type View = "work" | "archive" | "all";
 type ArchiveFilter = "all" | StudyStatus;
 
 // В работе — ждут решения врача; решённые уходят в архив
@@ -48,12 +49,18 @@ const COLUMNS = [
   "Лечащий врач",
 ];
 
+const isUrgent = (s: StudyListItem) =>
+  s.ai?.recommendation === "urgent_hospitalization" && !s.decision;
+
 const PAGE = 5; // сколько строк показывать до «Развернуть»
 
 export default function StudiesPage() {
   return (
     <AppShell roles={["doctor", "chief", "manager"]}>
-      <StudiesQueue />
+      {/* useSearchParams (?patient= из календаря) требует Suspense при статической сборке */}
+      <Suspense fallback={<Skeleton className="h-96 rounded-3xl" />}>
+        <StudiesQueue />
+      </Suspense>
     </AppShell>
   );
 }
@@ -61,20 +68,30 @@ export default function StudiesPage() {
 function StudiesQueue() {
   const { user } = useAuth();
   const isDoctor = user?.role === "doctor";
-  const [scope, setScope] = useState<"mine" | "all">(isDoctor ? "mine" : "all");
-  const [view, setView] = useState<View>("work");
+
+  // Из календаря: ?patient=ФИО — все исследования этого пациента (и в работе, и в архиве)
+  const params = useSearchParams();
+  const patientParam = params.get("patient") ?? "";
+  const [view, setView] = useState<View>(patientParam ? "all" : "work");
+  // Пациент из календаря — его исследования у всех врачей, не только у текущего
+  const [scope, setScope] = useState<"mine" | "all">(isDoctor && !patientParam ? "mine" : "all");
   const [filter, setFilter] = useState<ArchiveFilter>("all");
-  const status = view === "work" ? WORK : filter === "all" ? ARCHIVE : [filter];
+  const status =
+    view === "all" ? undefined : view === "work" ? WORK : filter === "all" ? ARCHIVE : [filter];
   const { data, isLoading, error } = useStudies(scope, status);
   const label = useLabels();
   const router = useRouter();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(patientParam);
   const [expanded, setExpanded] = useState(false);
   // Свежие сверху; поиск — по ФИО пациента (любая часть, без учёта регистра)
   const q = query.trim().toLowerCase();
   const found = (data ?? [])
     .filter((s) => !q || s.patient.full_name.toLowerCase().includes(q))
-    .sort((a, b) => b.performed_at.localeCompare(a.performed_at));
+    // AI рекомендует экстренную госпитализацию — наверх; дальше свежие
+    .sort(
+      (a, b) =>
+        Number(isUrgent(b)) - Number(isUrgent(a)) || b.performed_at.localeCompare(a.performed_at),
+    );
   const shown = expanded ? found : found.slice(0, PAGE);
 
   return (
@@ -84,9 +101,11 @@ function StudiesQueue() {
           <h1 className="text-3xl font-medium tracking-tight md:text-4xl">
             {view === "archive"
               ? "Архив"
-              : isDoctor && scope === "mine"
-                ? "Мои исследования"
-                : "Все исследования"}
+              : view === "all"
+                ? "Все исследования"
+                : isDoctor && scope === "mine"
+                  ? "Мои исследования"
+                  : "Все исследования"}
           </h1>
           <p className="text-sm text-muted-foreground">
             {data ? (q ? `найдено ${found.length} из ${data.length}` : `${data.length} шт.`) : " "}
@@ -107,6 +126,7 @@ function StudiesQueue() {
               <TabsTrigger value="archive">
                 <Archive /> Архив
               </TabsTrigger>
+              <TabsTrigger value="all">Все статусы</TabsTrigger>
             </TabsList>
           </Tabs>
           {view === "archive" && (
@@ -123,16 +143,20 @@ function StudiesQueue() {
         </div>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          type="search"
-          placeholder="Поиск по пациенту"
-          aria-label="Поиск по пациенту"
-          className="h-10 pl-9"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="relative w-full max-w-sm">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Поиск по пациенту"
+            aria-label="Поиск по пациенту"
+            className="h-10 pl-9"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        {/* Новое исследование из DICOM SR — врач и главврач (менеджер только смотрит) */}
+        {user?.role !== "manager" && <NewStudyButton />}
       </div>
 
       <div className="overflow-hidden rounded-3xl bg-card px-3 py-2">
@@ -167,7 +191,9 @@ function StudiesQueue() {
                     ? `Пациентов «${query.trim()}» не найдено`
                     : view === "work"
                       ? "Все исследования разобраны — решённые в архиве"
-                      : "Архив пуст"}
+                      : view === "all"
+                        ? "Исследований нет"
+                        : "Архив пуст"}
                 </TableCell>
               </TableRow>
             )}

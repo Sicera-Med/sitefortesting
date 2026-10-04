@@ -20,7 +20,7 @@ def test_create_update_and_disable_doctor(client, chief):
     body = {
         "full_name": "Новикова Елена Петровна",
         "email": "novikova@clinic.demo",
-        "specialty": "cardiologist",
+        "specialty": "urologist",
         "password": "secret",
     }
     r = client.post(f"{API}/staff/doctors", headers=chief, json=body)
@@ -32,10 +32,10 @@ def test_create_update_and_disable_doctor(client, chief):
 
     # Новый врач входит и виден пациентам для записи
     token = login(client, "novikova@clinic.demo", "secret")
-    cardiologists = client.get(
-        f"{API}/doctors", params={"specialty": "cardiologist"}, headers=token
+    urologists = client.get(
+        f"{API}/doctors", params={"specialty": "urologist"}, headers=token
     ).json()
-    assert [d["id"] for d in cardiologists] == [doctor["id"]]
+    assert [d["id"] for d in urologists] == [doctor["id"]]
 
     r = client.patch(
         f"{API}/staff/doctors/{doctor['id']}", headers=chief, json={"specialty": "therapist"}

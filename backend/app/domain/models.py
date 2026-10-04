@@ -13,15 +13,18 @@ from typing import Any
 from app.domain.enums import (
     AISource,
     AppointmentStatus,
+    DeliveryStatus,
     NotificationChannel,
     NotificationStatus,
     PatientActionType,
     RecommendationType,
     Role,
     Sex,
+    SocialNetwork,
     StudyStatus,
     StudyType,
 )
+from app.domain.sr import SRField, report_text
 
 
 @dataclass(slots=True, kw_only=True)
@@ -36,6 +39,14 @@ class User:
     active: bool = True  # главврач может отключить доступ врача
 
 
+@dataclass(frozen=True, slots=True)
+class Social:
+    """Аккаунт пациента в соцсети или мессенджере."""
+
+    network: SocialNetwork
+    handle: str
+
+
 @dataclass(slots=True, kw_only=True)
 class Patient:
     id: str
@@ -44,7 +55,8 @@ class Patient:
     birth_date: date
     sex: Sex
     phone: str
-    social: str | None = None  # аккаунт в соцсети/мессенджере, если пациент его указал
+    contact_email: str | None = None  # почта для уведомлений; нет — email входа
+    socials: tuple[Social, ...] = ()  # соцсети и мессенджеры, которые указал пациент
     # Каналы, в которые пациент разрешил уведомления (кабинет на сайте — всегда)
     notify_channels: frozenset[NotificationChannel] = frozenset(NotificationChannel)
 
@@ -63,12 +75,19 @@ class Study:
     status: StudyStatus
     performed_at: datetime
     created_at: datetime
-    report_text: str
+    # Раздел «Описание» DICOM SR (поля БФТ как есть) и заключение рентгенолога, если есть
+    sr_fields: tuple[SRField, ...] = ()
+    conclusion: str | None = None
     # Автоповтор при сбое AI: неудачных автоматических попыток подряд, когда следующая,
     # и остановлен ли он (после AI_MAX_AUTO_ATTEMPTS — только ручная отправка)
     ai_auto_failures: int = 0
     ai_next_retry_at: datetime | None = None
     ai_auto_stopped: bool = False
+
+    @property
+    def report_text(self) -> str:
+        """Протокол для AI в формате AI-команды: «Описание: …\nЗаключение: …»."""
+        return report_text(self.sr_fields, self.conclusion)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,8 +117,11 @@ class AIInference:
     reasons: tuple[Reason, ...]
     latency_ms: int
     created_at: datetime
-    # Предложенные AI детали: {"specialist": ...} или {"research_types": [...]}; {} — нет
+    # Предложенные AI детали основного варианта: {"specialists"} / {"research_types"}; {} — нет
     details: dict[str, Any] = field(default_factory=dict)
+    # Все варианты модели (основной первым): пункты с причиной, сроком и ссылками на документы
+    options: tuple[dict[str, Any], ...] = ()
+    guidelines_mode: str | None = None  # справочник: по словам протокола / весь
 
 
 @dataclass(slots=True, kw_only=True)
@@ -122,6 +144,19 @@ class Decision:
     details_match: bool | None = None
 
 
+@dataclass(slots=True)
+class Delivery:
+    """Одна отправка уведомления: канал, адрес, номер попытки (0 — первая, 1.. — напоминания)."""
+
+    at: datetime
+    channel: NotificationChannel
+    target: str  # телефон, email или «Telegram @…»
+    attempt: int
+    text: str = ""  # что ушло: короткое сообщение со ссылкой на сайт
+    status: DeliveryStatus = DeliveryStatus.SIMULATED
+    detail: str | None = None  # ошибка канала или почему имитация («не настроено»)
+
+
 @dataclass(slots=True, kw_only=True)
 class Notification:
     id: str
@@ -130,13 +165,20 @@ class Notification:
     patient_id: str
     # Каналы, в которые ушло уведомление (все доступные контакты); в кабинете — всегда
     channels: tuple[NotificationChannel, ...]
-    text: str
+    text: str  # подробный — в личном кабинете на сайте
+    short_text: str = ""  # короткий со ссылкой — в SMS / email / соцсети
     status: NotificationStatus
     sent_at: datetime
     read_at: datetime | None = None
     patient_action: PatientActionType | None = None
     action_at: datetime | None = None
     appointment_id: str | None = None
+    # История отправок (имитация каналов) и напоминания, пока пациент не записался
+    deliveries: list[Delivery] = field(default_factory=list)
+    reminders_sent: int = 0
+    next_reminder_at: datetime | None = None
+    # B2C: объяснение заключения пациенту простым языком {summary, terms[{term, explanation}]}
+    explanation: dict[str, Any] | None = None
 
 
 @dataclass(slots=True, kw_only=True)

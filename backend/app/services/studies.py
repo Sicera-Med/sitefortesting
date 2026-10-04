@@ -19,7 +19,7 @@ from app.core.errors import (
 from app.core.ids import new_id
 from app.domain import rules
 from app.domain.decisions import normalize_chosen, normalize_details
-from app.domain.enums import AISource, RecommendationType, Role, StudyStatus
+from app.domain.enums import AISource, RecommendationType, Role, StudyStatus, StudyType
 from app.domain.models import (
     AIInference,
     Appointment,
@@ -30,6 +30,7 @@ from app.domain.models import (
     Study,
     User,
 )
+from app.domain.sr import STUDY_KINDS, parse_sr
 from app.services import audit
 from app.services.ai_service import AIService
 from app.services.notifications import NotificationService, RequirementView, requirement_views
@@ -163,6 +164,8 @@ class StudyService:
                 latency_ms=latency_ms,
                 created_at=utcnow(),
                 details=dict(result.details),
+                options=result.options,
+                guidelines_mode=result.guidelines_mode,
             )
         )
         # Пока шёл запрос, врач мог уже решить без AI — статус тогда не трогаем
@@ -261,6 +264,92 @@ class StudyService:
             )
         result = self.ai.parse_manual(data)
         return self._save_inference(user, study, result, source=AISource.MANUAL, latency_ms=0)
+
+    # --- B2C: объяснение заключения пациенту ---
+
+    async def explain_for_patient(self, user: User, notification_id: str) -> dict[str, Any]:
+        """Объяснение простым языком — лениво, при первом открытии карточки пациентом.
+
+        Один раз на уведомление; повтор — не чаще AI_SEND_COOLDOWN_S, двойной запрос — 409.
+        """
+        notification = NotificationService(self.store).own_notification(user, notification_id)
+        if notification.explanation:
+            return notification.explanation
+        key = f"explain:{notification.id}"
+        if key in self.store.ai_in_flight:
+            raise ConflictError("Объяснение уже готовится")
+        now = utcnow()
+        last = self.store.ai_last_sent.get(key)
+        if last is not None and (now - last).total_seconds() < self.send_cooldown_s:
+            raise TooManyRequestsError("Объяснение готовится, попробуйте через несколько секунд")
+        self.store.ai_last_sent[key] = now
+        self.store.ai_in_flight.add(key)
+        try:
+            study = self.store.get_study(notification.study_id)
+            explanation = await self.ai.explain(self.ai.explain_request_for_study(study))
+        finally:
+            self.store.ai_in_flight.discard(key)
+        notification.explanation = explanation
+        return explanation
+
+    # --- Новое исследование ---
+
+    def patients(self, user: User) -> list[Patient]:
+        if user.role not in rules.STAFF_ROLES:
+            raise ForbiddenError("Нет доступа к пациентам")
+        return self.store.list_patients()
+
+    def create(
+        self,
+        user: User,
+        *,
+        patient_id: str,
+        study_type: StudyType,
+        body_region: str,
+        description: str,
+        conclusion: str | None,
+        performed_at: datetime | None = None,
+        treating_doctor_id: str | None = None,
+    ) -> StudyView:
+        """Исследование из сырых данных DICOM SR: раздел «Описание» («Поле- значение»).
+
+        Врач создаёт себе; главврач — для выбранного врача. Дальше — в AI (при открытии карточки).
+        """
+        if user.role not in (Role.DOCTOR, Role.CHIEF):
+            raise ForbiddenError("Добавить исследование может врач или главврач")
+        if (study_type, body_region) not in STUDY_KINDS:
+            raise InvalidInputError(
+                "Поддерживаются только КТ ОГК, РГ/ФЛГ ОГК, маммография и КТ ГМ",
+                details={"study_type": str(study_type), "body_region": body_region},
+            )
+        patient = self.store.get_patient(patient_id)
+        if patient is None:
+            raise NotFoundError("Пациент не найден", details={"patient_id": patient_id})
+        doctor_id = user.id if user.role is Role.DOCTOR else treating_doctor_id
+        doctor = self.store.get_user(doctor_id) if doctor_id else None
+        if doctor is None or doctor.role is not Role.DOCTOR or not doctor.active:
+            raise InvalidInputError("Укажите лечащего врача", details={"doctor_id": doctor_id})
+        fields, parsed_conclusion = parse_sr(description)
+        conclusion = (conclusion or "").strip() or parsed_conclusion
+        if not fields and not conclusion:
+            raise InvalidInputError("Протокол пустой: вставьте описание DICOM SR или заключение")
+        now = utcnow()
+        study = self.store.add_study(
+            Study(
+                id=new_id("st"),
+                patient_id=patient.id,
+                treating_doctor_id=doctor.id,
+                study_type=study_type,
+                body_region=body_region,
+                status=StudyStatus.NEW,
+                performed_at=performed_at or now,
+                created_at=now,
+                sr_fields=tuple(fields),
+                conclusion=conclusion,
+            )
+        )
+        audit.record(self.store, user, "study.created", target_id=study.id, fields=len(fields))
+        return self._view(user, study)
 
     # --- Лечащий врач ---
 

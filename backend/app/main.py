@@ -5,6 +5,7 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,8 +17,11 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import setup_logging
 from app.core.request_id import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.seed import DEMO_PASSWORD, seed_demo
+from app.services import channels
 from app.services.ai_service import AIService
 from app.services.auto_analyze import AutoAnalyzer
+from app.services.outbox import OutboxService
+from app.services.reminders import ReminderService
 from app.services.studies import StudyService
 from app.store import Store
 
@@ -50,7 +54,12 @@ def _build_cors_kwargs(settings: Settings) -> dict:
 def build_store(settings: Settings) -> Store:
     store = Store()
     if settings.SEED_ON_START:
-        seed_demo(store, tz=settings.CLINIC_TZ)
+        seed_demo(
+            store,
+            tz=settings.CLINIC_TZ,
+            contact_phone=settings.DEMO_CONTACT_PHONE,
+            contact_email=settings.DEMO_CONTACT_EMAIL,
+        )
         logger.info(
             "Demo data seeded: users=%d studies=%d; password for all demo accounts: %s",
             len(store.users),
@@ -87,13 +96,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         retry_s=settings.AI_RETRY_S,
         max_attempts=settings.AI_MAX_AUTO_ATTEMPTS,
     )
-    task = (
-        asyncio.create_task(app.state.analyzer.run_forever()) if settings.AI_AUTO_ANALYZE else None
+    app.state.reminders = ReminderService(app.state.store)
+    app.state.outbox = OutboxService(
+        app.state.store,
+        partial(channels.send, settings),
+        poll_s=settings.NOTIFY_OUTBOX_POLL_S,
     )
+    logger.info(
+        "Notifications: %s",
+        f"real (SMS: {settings.NOTIFY_SMS}, email: {settings.NOTIFY_EMAIL})"
+        if settings.NOTIFY_REAL
+        else "simulated",
+    )
+    tasks = []
+    if settings.NOTIFY_OUTBOX:
+        tasks.append(asyncio.create_task(app.state.outbox.run_forever()))
+    if settings.AI_AUTO_ANALYZE:
+        tasks.append(asyncio.create_task(app.state.analyzer.run_forever()))
+    if settings.NOTIFY_REMINDERS:
+        tasks.append(asyncio.create_task(app.state.reminders.run_forever()))
     try:
         yield
     finally:
-        if task:
+        for task in tasks:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task

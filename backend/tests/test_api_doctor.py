@@ -53,15 +53,15 @@ def test_doctor_queue_is_mine_by_default(client, petrov):
 
 def test_doctor_scope_all_is_read_only_for_others(client, petrov):
     items = client.get(f"{API}/studies", params={"scope": "all"}, headers=petrov).json()
-    assert len(items) == 15
+    assert len(items) == 16
     others = [i for i in items if not i["doctor"]["full_name"].startswith("Петров")]
     assert others and not any(i["can_act"] for i in others)
 
 
 def test_chief_and_manager_see_all(client, chief, manager):
-    assert len(client.get(f"{API}/studies", headers=chief).json()) == 15
+    assert len(client.get(f"{API}/studies", headers=chief).json()) == 16
     items = client.get(f"{API}/studies", headers=manager).json()
-    assert len(items) == 15 and not any(i["can_act"] for i in items)
+    assert len(items) == 16 and not any(i["can_act"] for i in items)
 
 
 def test_patient_cannot_see_studies(client, kuznetsova):
@@ -72,8 +72,8 @@ def test_card(client, petrov):
     analyze_all(client)
     item = _study(client, petrov, status="ai_ready")
     card = client.get(f"{API}/studies/{item['id']}", headers=petrov).json()
-    assert card["report_text"]
-    assert card["ai"]["reasons"] and len(card["ai"]["ranked_options"]) == 4
+    assert card["report_text"] and card["sr_fields"] is not None
+    assert card["ai"]["reasons"] and len(card["ai"]["ranked_options"]) == 5
     assert card["patient"]["age"] > 0
 
 
@@ -227,7 +227,7 @@ def _failing_study(client, headers):
     store = client.app.state.store
     sid = _study(client, headers, status="new")["id"]
     study = store.get_study(sid)
-    study.report_text += " [[ai_fail]]"
+    study.conclusion = (study.conclusion or "") + " [[ai_fail]]"
     return sid, study
 
 
@@ -254,7 +254,7 @@ def test_ai_failure_then_automatic_retry(client, petrov):
     assert sid not in client.app.state.analyzer._due()
 
     # Сервис «поднялся» — в срок воркер повторит анализ сам
-    study.report_text = study.report_text.replace(" [[ai_fail]]", "")
+    study.conclusion = study.conclusion.replace(" [[ai_fail]]", "")
     _make_due(study)
     analyze_all(client)
     card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
@@ -300,7 +300,7 @@ def test_manual_retry(client, petrov, sidorova, chief):
     assert last["action"] == "ai.failed" and last["actor_name"].startswith("Петров")
     assert study.ai_auto_failures == 1  # ручная попытка автосчётчик не трогает
 
-    study.report_text = study.report_text.replace(" [[ai_fail]]", "")
+    study.conclusion = study.conclusion.replace(" [[ai_fail]]", "")
     r = client.post(f"{API}/studies/{sid}/analyze", headers=chief)  # главврач тоже может
     assert r.status_code == 200, r.text
     card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
@@ -411,5 +411,5 @@ def test_manual_send_cooldown(client, petrov, monkeypatch):
 
     store = client.app.state.store
     store.ai_last_sent[sid] -= timedelta(seconds=11)
-    study.report_text = study.report_text.replace(" [[ai_fail]]", "")
+    study.conclusion = study.conclusion.replace(" [[ai_fail]]", "")
     assert client.post(f"{API}/studies/{sid}/analyze", headers=petrov).status_code == 200

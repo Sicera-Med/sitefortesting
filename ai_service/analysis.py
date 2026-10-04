@@ -1,15 +1,17 @@
-"""Анализ протокола: промт, выбор шаблона БФТ по типу исследования, разбор и проверка ответа модели."""
+"""Анализ протокола: промт, шаблон БФТ и справочник рекомендаций по типу исследования, разбор и проверка ответа."""
 import json
 import re
 
 from bft_templates import TEMPLATES, find_template, render_template
+from guidelines import cite, entry_ids, entry_supports, guideline_key, render_guidelines, select_entries
 
 # Справочники кодов, которыми модель отвечает
 RECOMMENDATION_TYPES = {
     "repeat_appointment": "Повторный приём у лечащего врача",
+    "urgent_hospitalization": "Экстренная госпитализация",
     "specialist_consult": "Консультация специалиста",
     "additional_research": "Дополнительное исследование",
-    # ПРАВКА sitefortesting 2026-10-04: 4-й вариант — норма, действий не требуется
+    # ПРАВКА sitefortesting 2026-10-04: 5-й вариант — норма, действий не требуется
     "no_pathology": "Патологии не выявлено, дальнейших действий не требуется",
 }
 SPECIALISTS = {
@@ -23,6 +25,8 @@ SPECIALISTS = {
     "gastroenterologist": "Гастроэнтеролог",
     "endocrinologist": "Эндокринолог",
     "urologist": "Уролог",
+    "vascular_surgeon": "Сердечно-сосудистый (сосудистый) хирург",
+    "radiotherapist": "Радиотерапевт",
 }
 RESEARCH_TYPES = {
     "ct": "Компьютерная томография",
@@ -30,6 +34,12 @@ RESEARCH_TYPES = {
     "mri": "МРТ",
     "pet_ct": "ПЭТ-КТ",
     "ultrasound": "УЗИ",
+    "mammography": "Маммография",
+    "ldct": "Низкодозная КТ (НДКТ)",
+    "ct_angiography": "КТ-ангиография",
+    "mri_contrast": "МРТ с контрастированием",
+    "adrenal_ct": "КТ надпочечников по протоколу с вымыванием или МРТ с химическим сдвигом",
+    "echocardiography": "Эхокардиография (ЭхоКГ)",
     "xray": "Рентгенография",
     "biopsy": "Биопсия",
     "bronchoscopy": "Бронхоскопия",
@@ -88,28 +98,45 @@ SYSTEM_PROMPT = """Ты — ассистент врача (система под
 
 Правила:
 1. Опирайся только на то, что написано в протоколе. Не придумывай находки, размеры, жалобы.
-2. Выбери ОДИН основной вариант (recommendation) из кодов ниже и упорядочи все коды
-   от наиболее к наименее подходящему (options_order). Первый в options_order = recommendation.
-   no_pathology — только если в протоколе нет патологических изменений и рекомендаций
-   (норма); при любой находке, требующей наблюдения, выбирай другой вариант.
-3. Если recommendation = specialist_consult — укажи specialists (только коды из списка).
-   Если recommendation = additional_research — укажи research_types (только коды из списка).
-   Если подходящего кода нет — выбери ближайший и не придумывай новых кодов.
-4. reasons — находки из протокола, на которых основан выбор, от главной к второстепенной:
+2. Предложи от 1 до 3 вариантов (options), каждый тип — не больше одного раза,
+   от наиболее к наименее подходящему. Ровно один вариант отметь "recommended": true —
+   основной; остальные — "recommended": false (альтернативы, из которых врач тоже может выбрать).
+   Не добавляй вариант «для полноты», если он не следует из протокола.
+3. Внутри варианта перечисли в items всё, что нужно, — несколько специалистов
+   или несколько исследований, если находок несколько или одной недостаточно:
+   - specialist_consult — коды из списка «Специалисты»;
+   - additional_research — коды из списка «Исследования»;
+   - repeat_appointment, urgent_hospitalization, no_pathology — items пустой.
+   no_pathology — только если в протоколе нет патологических изменений (норма); тогда это
+   единственный вариант. При любой находке, требующей наблюдения, выбирай другой вариант.
+   У каждого item укажи reason — какая находка из протокола требует именно его.
+   Без повторов. Если подходящего кода нет — выбери ближайший и не придумывай новых кодов.
+4. reasons — все значимые находки протокола, от главной к второстепенной:
    code — короткий латинский идентификатор в snake_case, label — находка по-русски (до 80 символов).
    Минимум одна причина.
 5. Пиши по-русски, медицинской терминологией, без англицизмов (не "бенигный", а "доброкачественный").
 6. Шкалы (BI-RADS, CAC-DRS и т.п.) трактуй строго по их категориям, не завышай и не занижай.
 7. Ниже дан шаблон протокола для этого типа исследования. Называй находки так, как в шаблоне.
    Поля, которых нет в протоколе, не считай нормой и не додумывай.
+8. Ниже дан справочник «находка → действие» из официальных документов.
+   - Если находка есть в справочнике, бери действия и сроки оттуда и укажи в sources id записи.
+     Если действие подтверждают несколько записей (например, разные документы) — перечисли все.
+   - Учитывай условия (!) и ограничения записи: например, область применения шкалы.
+     Если условие не выполнено или по протоколу его нельзя проверить — скажи об этом в rationale.
+   - Действия, которых нет в справочнике, добавляй только если они следуют из протокола,
+     и ставь sources = []: врач увидит, что это предложение модели, а не документа.
+   - В sources указывай только записи, в которых это действие (этот код) действительно есть.
+   - timing — срок из справочника; если в справочнике срока нет — null, не придумывай.
+   - Если справочник показан частично и для значимой находки нет записи или данных не хватает
+     для решения — добавь в ответ "need_full_guidelines": true (остальные поля заполни как сможешь).
 
-Варианты (recommendation):
+Варианты (options[].type):
 """ + "\n".join(f"- {k}: {v}" for k, v in RECOMMENDATION_TYPES.items()) + """
 
-Специалисты (specialists):
+Специалисты (items для specialist_consult):
 """ + "\n".join(f"- {k}: {v}" for k, v in SPECIALISTS.items()) + """
 
-Исследования (research_types):
+Исследования (items для additional_research):
 """ + "\n".join(f"- {k}: {v}" for k, v in RESEARCH_TYPES.items()) + """
 
 Сокращения:
@@ -117,10 +144,25 @@ SYSTEM_PROMPT = """Ты — ассистент врача (система под
 
 Ответ — строго один JSON-объект, без текста и markdown вокруг:
 {
-  "recommendation": "repeat_appointment | specialist_consult | additional_research | no_pathology",
-  "options_order": ["код 1", "код 2", "код 3", "код 4"],
-  "specialists": ["cardiologist"],
-  "research_types": [],
+  "options": [
+    {
+      "type": "specialist_consult",
+      "recommended": true,
+      "items": [
+        {"code": "cardiologist", "reason": "Кардиомегалия, КТИ 0,6", "timing": null, "sources": []},
+        {"code": "...", "reason": "другая находка из протокола", "timing": null, "sources": []}
+      ],
+      "sources": [],
+      "rationale": "почему этот вариант, 1–2 предложения"
+    },
+    {
+      "type": "additional_research",
+      "recommended": false,
+      "items": [{"code": "ldct", "reason": "Солидный очаг 9 мм", "timing": "через 3 месяца", "sources": ["lungrads_4a"]}],
+      "sources": [],
+      "rationale": "..."
+    }
+  ],
   "reasons": [{"code": "cardiomegaly", "label": "Кардиомегалия, КТИ 0,6"}]
 }"""
 
@@ -132,8 +174,19 @@ def template_key(study_type):
     return next((k for k, v in TEMPLATES.items() if v is tpl), None) if tpl else None
 
 
-def build_messages(study_type, report_text, patient_context=None):
-    """Системный промт + шаблон только этого типа исследования; в сообщении — протокол."""
+def guidelines_partial(study_type, report_text):
+    """True — по словам протокола в промт попадёт только часть справочника."""
+    key = guideline_key(study_type, template_key(study_type))
+    return bool(key) and select_entries(key, report_text)[1]
+
+
+def build_messages(study_type, report_text, patient_context=None, full_guidelines=False,
+                   use_bft=True, use_guidelines=True):
+    """Системный промт + шаблон этого типа исследования + справочник; в сообщении — протокол.
+
+    Справочник — по словам из match (full_guidelines=False) или целиком (True).
+    use_bft / use_guidelines = False — без шаблона БФТ / без справочника (сравнение в tests/test_modes.py).
+    """
     key = template_key(study_type)
     label = TEMPLATES[key]["label"] if key else study_type
     template = render_template(key) if key else f"Шаблон протокола для «{label}» в БФТ не найден."
@@ -143,8 +196,13 @@ def build_messages(study_type, report_text, patient_context=None):
         sex = {"m": "мужской", "f": "женский"}.get(ctx.get("sex"), "не указан")
         user.append(f"Пациент: возраст {ctx.get('age', 'не указан')}, пол {sex}")
     user.append(f"Протокол:\n{report_text}")
+    guide = render_guidelines(guideline_key(study_type, key), report_text, full=full_guidelines)
+    if not use_bft:
+        template = "Шаблона протокола нет."
+    if not use_guidelines:
+        guide = "Справочника нет: у всех действий source = null."
     return [
-        {"role": "system", "content": SYSTEM_PROMPT + "\n\n" + template},
+        {"role": "system", "content": SYSTEM_PROMPT + "\n\n" + template + "\n\n" + guide},
         {"role": "user", "content": "\n\n".join(user)},
     ]
 
@@ -158,29 +216,103 @@ def parse_json(raw):
         return None
 
 
-def validate(parsed):
-    """Список нарушений формата ответа; пустой — ответ корректен."""
+ITEM_CODES = {
+    "specialist_consult": SPECIALISTS,
+    "additional_research": RESEARCH_TYPES,
+    "repeat_appointment": {},
+    "urgent_hospitalization": {},
+    "no_pathology": {},  # ПРАВКА sitefortesting: норма — без пунктов
+}
+
+
+def sources_of(x):
+    """id источников пункта/варианта: список sources; старый формат source (строка) тоже принимается."""
+    if isinstance(x.get("sources"), list):
+        return [i for i in x["sources"] if i]
+    return [x["source"]] if x.get("source") else []
+
+
+def validate(parsed, study_type=None):
+    """Список нарушений формата ответа; пустой — ответ корректен.
+
+    study_type задан — каждый id в sources должен быть записью справочника этого типа исследования.
+    Соответствие действия записи проверяет attach_sources (неподтверждённые ссылки не ошибка формата).
+    """
     if not isinstance(parsed, dict):
         return ["ответ модели не JSON-объект"]
     errors = []
-    rec = parsed.get("recommendation")
-    if rec not in RECOMMENDATION_TYPES:
-        errors.append(f"неизвестный recommendation: {rec!r}")
-    order = parsed.get("options_order") or []
-    if order and order[0] != rec:
-        errors.append("options_order начинается не с recommendation")
-    unknown = [c for c in order if c not in RECOMMENDATION_TYPES]
-    unknown += [c for c in parsed.get("specialists") or [] if c not in SPECIALISTS]
-    unknown += [c for c in parsed.get("research_types") or [] if c not in RESEARCH_TYPES]
-    if unknown:
-        errors.append(f"коды не из справочника: {unknown}")
-    if rec == "specialist_consult" and not parsed.get("specialists"):
-        errors.append("specialist_consult без specialists")
-    if rec == "additional_research" and not parsed.get("research_types"):
-        errors.append("additional_research без research_types")
+    options = parsed.get("options")
+    if not isinstance(options, list) or not 1 <= len(options) <= 3:
+        errors.append("options: нужно от 1 до 3 вариантов")
+        options = options if isinstance(options, list) else []
+    types = [o.get("type") for o in options if isinstance(o, dict)]
+    if len(types) != len(options):
+        errors.append("options: вариант не объект")
+    for t in types:
+        if t not in RECOMMENDATION_TYPES:
+            errors.append(f"неизвестный type: {t!r}")
+    if len(set(types)) != len(types):
+        errors.append("options: тип повторяется")
+    recommended = [o for o in options if isinstance(o, dict) and o.get("recommended") is True]
+    if len(recommended) != 1:
+        errors.append(f"recommended=true должен быть ровно у одного варианта, а не у {len(recommended)}")
+    elif options and options[0] is not recommended[0]:
+        errors.append("основной вариант (recommended) должен идти первым")
+    known = entry_ids(guideline_key(study_type, template_key(study_type))) if study_type else None
+    for o in options:
+        if not isinstance(o, dict) or o.get("type") not in ITEM_CODES:
+            continue
+        if known is not None:
+            bad = [i for x in [o, *(o.get("items") or [])] if isinstance(x, dict)
+                   for i in sources_of(x) if i not in known]
+            if bad:
+                errors.append(f"{o['type']}: sources не из справочника: {bad}")
+        allowed = ITEM_CODES[o["type"]]
+        items = o.get("items") or []
+        codes = [i.get("code") for i in items if isinstance(i, dict)]
+        if not allowed:  # варианты без пунктов: повторный приём, экстренная госпитализация
+            if items:
+                errors.append(f"{o['type']}: items должен быть пустым")
+            continue
+        if not codes:
+            errors.append(f"{o['type']}: пустой items")
+        unknown = [c for c in codes if c not in allowed]
+        if unknown:
+            errors.append(f"{o['type']}: коды не из справочника: {unknown}")
+        if len(set(codes)) != len(codes):
+            errors.append(f"{o['type']}: коды повторяются")
+        if any(not str(i.get("reason", "")).strip() for i in items if isinstance(i, dict)):
+            errors.append(f"{o['type']}: у item нет reason")
     reasons = parsed.get("reasons")
     if not isinstance(reasons, list) or not any(
         isinstance(r, dict) and str(r.get("label", "")).strip() for r in reasons
     ):
         errors.append("нет reasons")
     return errors
+
+
+def attach_sources(parsed):
+    """Ссылки на документы по id из sources — только подтверждённые.
+
+    Ссылка подтверждена, если в записи справочника есть это действие: для пункта — тот же тип варианта
+    и код, для варианта без пунктов (повторный приём, госпитализация) — тот же тип.
+    source_refs — подтверждённые ссылки (документ и страницы из guidelines/*.json, не из ответа модели);
+    unconfirmed_sources — id, которые модель указала, но в записи такого действия нет.
+    Пустой source_refs — предложение модели, не из документа.
+    """
+    if not isinstance(parsed, dict):
+        return parsed
+    for o in parsed.get("options") or []:
+        if not isinstance(o, dict):
+            continue
+        for x in [o, *(o.get("items") or [])]:
+            if not isinstance(x, dict):
+                continue
+            ids = sources_of(x)
+            code = x.get("code") if x is not o else None
+            ok = [i for i in ids if entry_supports(i, o.get("type"), code)]
+            x["sources"] = ids
+            x["source_refs"] = [r for r in (cite(i) for i in ok) if r]
+            x["unconfirmed_sources"] = [i for i in ids if i not in ok]
+            x.pop("source", None)
+    return parsed

@@ -1,6 +1,6 @@
 // Бейджи статуса Study, рекомендации AI с уверенностью и согласия врача с AI.
 
-import { Check, X } from "lucide-react";
+import { Check, X, Siren } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import type { RecommendationType, StudyStatus } from "@/lib/api/types";
@@ -42,6 +42,12 @@ export function AIBadge({
   recommendation: RecommendationType;
   confidence: number | null;
 }) {
+  if (recommendation === "urgent_hospitalization")
+    return (
+      <Badge className="bg-red-600 text-white">
+        <Siren /> Экстренно
+      </Badge>
+    );
   return (
     <span className="inline-flex items-center gap-2">
       <span className="text-sm">{RECOMMENDATION_LABELS[recommendation]}</span>

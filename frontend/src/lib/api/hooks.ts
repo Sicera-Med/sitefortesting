@@ -19,11 +19,15 @@ import type {
   Dictionaries,
   DoctorBrief,
   Inference,
+  Notification,
   PatientNotification,
+  PatientStudy,
   StaffDoctor,
   StaffDoctorIn,
   StaffDoctorPatch,
+  PatientBrief,
   StudyCard,
+  StudyIn,
   StudyListItem,
   StudyStatus,
 } from "./types";
@@ -53,6 +57,22 @@ export function useDemoUsers() {
 const AI_PENDING: StudyStatus[] = ["new", "ai_failed"];
 const POLL_MS = 3000;
 
+export function usePatients() {
+  return useQuery({
+    queryKey: ["patients"],
+    queryFn: () => api<PatientBrief[]>("/studies/patients"),
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateStudy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: StudyIn) => api<StudyCard>("/studies", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["studies"] }),
+  });
+}
+
 export function useStudies(scope: "mine" | "all", status?: StudyStatus[]) {
   return useQuery({
     queryKey: ["studies", scope, status ?? []],
@@ -66,8 +86,13 @@ export function useStudy(id: string) {
   return useQuery({
     queryKey: ["study", id],
     queryFn: () => api<StudyCard>(`/studies/${id}`),
-    refetchInterval: (q) =>
-      q.state.data && AI_PENDING.includes(q.state.data.status) ? POLL_MS : false,
+    // Ждём AI или отправку SMS / email из очереди — опрашиваем
+    refetchInterval: (q) => {
+      const d = q.state.data;
+      if (!d) return false;
+      const sending = d.notification?.deliveries.some((x) => x.status === "pending");
+      return AI_PENDING.includes(d.status) || sending ? POLL_MS : false;
+    },
   });
 }
 
@@ -114,6 +139,16 @@ export function useRetryAI(id: string) {
       return api<Inference>(`/studies/${id}/analyze`, { method: "POST" });
     },
     // и при сбое: в карточке и таймлайне — новая ошибка
+    onSettled: invalidate,
+  });
+}
+
+/** «Напомнить сейчас»: следующее напоминание пациенту сразу (лечащий врач / главврач). */
+export function useRemind(studyId: string) {
+  const invalidate = useInvalidateStudy(studyId);
+  return useMutation({
+    mutationFn: (notificationId: string) =>
+      api<Notification>(`/notifications/${notificationId}/remind`, { method: "POST" }),
     onSettled: invalidate,
   });
 }
@@ -194,6 +229,26 @@ export function useUpdateDoctor() {
 
 // --- Пациент ---
 
+/** B2C: объяснение заключения простым языком — запрашивается при открытии карточки. */
+export function useExplain() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (notificationId: string) =>
+      api<{ summary: string; terms: { term: string; explanation: string }[] }>(
+        `/notifications/${notificationId}/explain`,
+        { method: "POST" },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["my-notifications"] }),
+  });
+}
+
+export function useMyStudies() {
+  return useQuery({
+    queryKey: ["my-studies"],
+    queryFn: () => api<PatientStudy[]>("/patients/me/studies"),
+  });
+}
+
 export function useMyNotifications() {
   return useQuery({
     queryKey: ["my-notifications"],
@@ -205,6 +260,7 @@ function useInvalidatePatient() {
   const qc = useQueryClient();
   return () => {
     qc.invalidateQueries({ queryKey: ["my-notifications"] });
+    qc.invalidateQueries({ queryKey: ["my-studies"] });
     qc.invalidateQueries({ queryKey: ["appointments"] });
     qc.invalidateQueries({ queryKey: ["slots"] });
     qc.invalidateQueries({ queryKey: ["research-slots"] });

@@ -6,7 +6,14 @@ import time
 from typing import Any
 
 from app.ai.base import AIProvider, AIProviderError
-from app.ai.contract import AIContractError, AIRequest, AIResult, PatientContext, parse_ai_response
+from app.ai.contract import (
+    AIContractError,
+    AIRequest,
+    AIResult,
+    ExplainRequest,
+    PatientContext,
+    parse_ai_response,
+)
 from app.core.errors import AIFailedError
 from app.core.ids import new_id
 from app.domain.models import Patient, Study, User
@@ -36,6 +43,36 @@ class AIService:
                 age=patient.age_on(study.performed_at.date()), sex=patient.sex
             ),
         )
+
+    @staticmethod
+    def explain_request_for_study(study: Study) -> ExplainRequest:
+        description = " ".join(f"{f.name}: {f.value.rstrip('.;')}." for f in study.sr_fields)
+        return ExplainRequest(
+            request_id=new_id("req"),
+            study_type=study.study_type,
+            body_region=study.body_region,
+            description=description or None,
+            conclusion=study.conclusion,
+        )
+
+    async def explain(self, request: ExplainRequest) -> dict[str, Any]:
+        """B2C: {summary, terms} или AIFailedError — объяснение пациенту не критично."""
+        try:
+            async with asyncio.timeout(self.timeout_s):
+                raw = await self.provider.explain(request)
+        except TimeoutError as exc:
+            raise AIFailedError(f"AI не ответил за {self.timeout_s:g} с") from exc
+        except AIProviderError as exc:
+            raise AIFailedError(f"Ошибка AI-сервиса: {exc}") from exc
+        summary = raw.get("summary") if isinstance(raw, dict) else None
+        if not isinstance(summary, str) or not summary.strip():
+            raise AIFailedError("Объяснение AI не в нужном формате")
+        terms = [
+            {"term": str(t["term"]), "explanation": str(t["explanation"])}
+            for t in raw.get("explanations") or []
+            if isinstance(t, dict) and t.get("term") and t.get("explanation")
+        ]
+        return {"summary": summary.strip(), "terms": terms}
 
     async def run(self, request: AIRequest) -> tuple[AIResult, int]:
         """Возвращает (результат, latency_ms) или бросает AIFailedError."""

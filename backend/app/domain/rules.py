@@ -7,11 +7,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Literal
 
 from app.domain.enums import (
     AppointmentStatus,
     NotificationChannel,
+    PatientActionType,
     RecommendationType,
     Role,
     StudyStatus,
@@ -115,7 +117,7 @@ def available_channels(patient: Patient, user: User | None) -> tuple[Notificatio
         channels.append(NotificationChannel.SMS)
     if user is not None and user.email:
         channels.append(NotificationChannel.EMAIL)
-    if patient.social:
+    if patient.socials:
         channels.append(NotificationChannel.SOCIAL)
     return tuple(channels)
 
@@ -132,6 +134,22 @@ def is_patient_self(user: User, patient: Patient) -> bool:
 def can_respond_to_notification(notification: Notification) -> bool:
     """Пациент отвечает на уведомление один раз: запись или отказ."""
     return notification.patient_action is None
+
+
+# Напоминания, пока пациент не записался по всем направлениям: раз в неделю, до 3 раз
+REMINDER_INTERVAL = timedelta(days=7)
+MAX_REMINDERS = 3
+
+
+def needs_reminder(
+    notification: Notification, decision: Decision, appointments: Iterable[Appointment]
+) -> bool:
+    """Ждём от пациента записи: не отказался и закрыл записью не все направления."""
+    return (
+        notification.patient_action is not PatientActionType.DECLINED
+        and needs_booking(decision)
+        and not all_covered(decision, appointments)
+    )
 
 
 def needs_booking(decision: Decision) -> bool:

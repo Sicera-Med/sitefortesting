@@ -7,6 +7,7 @@ from collections import Counter
 from typing import Any
 
 from app.domain import rules
+from app.domain.decisions import EXCLUSIVE_TYPES
 from app.domain.enums import AISource, PatientActionType, RecommendationType, StudyStatus
 from app.domain.models import Decision, Notification
 from app.store import Store
@@ -42,6 +43,7 @@ class MetricsService:
             "latency": self._latency(),
             "by_doctor": self._by_doctor(decisions),
             "notifications": self._notifications(),
+            "funnel": self._funnel(),
             "recent_decisions": [self._decision_row(d) for d in decisions[:10]],
         }
 
@@ -101,11 +103,12 @@ class MetricsService:
             user = self.store.get_user(d.doctor_id)
             if user not in authors:
                 authors.append(user)
+        # Все врачи — и без решений (в «Показать всех»); главврач — только если решал
         for doctor in authors:
             own = [d for d in decisions if d.doctor_id == doctor.id]
-            if not own:
-                continue
             with_ai = [d for d in own if d.accepted_ai is not None]
+            compared = [d for d in own if d.details_match is not None]
+            details = _rate(sum(d.details_match for d in compared), len(compared))
             rows.append(
                 {
                     "doctor_id": doctor.id,
@@ -113,15 +116,20 @@ class MetricsService:
                     "specialty": doctor.specialty,
                     "decisions": len(own),
                     **_rate(sum(d.accepted_ai for d in with_ai), len(with_ai)),
+                    # Полное совпадение: тип и детали (специалист / исследования) как у AI
+                    "details_agreed": details["agreed"],
+                    "details_total": details["total"],
+                    "details_rate": details["rate"],
                 }
             )
-        return rows
+        # Лидеры по согласию сверху; без решений с AI — в конце, по числу решений
+        return sorted(rows, key=lambda r: (r["rate"] is None, -(r["rate"] or 0), -r["decisions"]))
 
     def _notifications(self) -> list[dict[str, Any]]:
         """Конверсия уведомлений по типу рекомендации врача."""
         rows = []
         # Только направления, по которым пациент записывается
-        for kind in (t for t in RecommendationType if t is not RecommendationType.NO_PATHOLOGY):
+        for kind in (t for t in RecommendationType if t not in EXCLUSIVE_TYPES):
             sent = [
                 n
                 for n in self.store.list_notifications()
@@ -138,6 +146,44 @@ class MetricsService:
                     "declined": declined,
                     "pending": len(sent) - booked - declined,
                     "booked_rate": round(booked / len(sent), 4) if sent else None,
+                }
+            )
+        return rows
+
+    def _funnel(self) -> list[dict[str, Any]]:
+        """Воронка после уведомления: всего и по каждому типу направления.
+
+        Только уведомления, по которым есть куда записываться («патологии не выявлено» — нет).
+        """
+        bookable = [
+            (n, self.store.get_decision(n.decision_id))
+            for n in self.store.list_notifications()
+            if rules.needs_booking(self.store.get_decision(n.decision_id))
+        ]
+        groups: list[tuple[str, list[tuple[Notification, Decision]]]] = [("all", bookable)]
+        for kind in RecommendationType:
+            if kind in EXCLUSIVE_TYPES:  # без записи — в воронке им нечего делать
+                continue
+            groups.append((str(kind), [(n, d) for n, d in bookable if kind in d.chosen_types]))
+        rows = []
+        for scope, items in groups:
+            covered = [
+                rules.covered_keys(self.store.list_appointments(notification_id=n.id))
+                for n, _ in items
+            ]
+            rows.append(
+                {
+                    "scope": scope,
+                    "sent": len(items),
+                    "read": sum(n.read_at is not None for n, _ in items),
+                    "booked_any": sum(bool(c) for c in covered),
+                    "booked_all": sum(
+                        all(r.key in c for r in rules.required_bookings(d))
+                        for (_, d), c in zip(items, covered, strict=True)
+                    ),
+                    "declined": sum(
+                        n.patient_action is PatientActionType.DECLINED for n, _ in items
+                    ),
                 }
             )
         return rows

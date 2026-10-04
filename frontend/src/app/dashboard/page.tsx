@@ -1,25 +1,18 @@
 "use client";
 
-import Link from "next/link";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { ConfusionMatrix, RateRow, StatTile, Tip } from "@/components/dashboard/charts";
-import { AgreementBadge } from "@/components/study-badges";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { errorMessage } from "@/lib/api/client";
 import { useDashboard } from "@/lib/api/hooks";
 import type { Dashboard, RecommendationType, StudyStatus } from "@/lib/api/types";
-import { fmtDateTime, pct, RECOMMENDATION_LABELS, STATUS_LABELS, useLabels } from "@/lib/format";
+import { pct, RECOMMENDATION_LABELS, STATUS_LABELS, useLabels } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function DashboardPage() {
@@ -90,21 +83,14 @@ function DashboardView() {
         </p>
       </div>
       <Kpis data={data} />
-      {/* Модель коллег уверенность не сообщает — блок только когда есть данные */}
-      {hasConfidence(data) ? (
-        <div className="grid gap-6 lg:grid-cols-[1fr_1.4fr]">
-          <ByConfidence data={data} />
-          <Matrix data={data} />
-        </div>
-      ) : (
+      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <Matrix data={data} />
-      )}
-      <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
         <Doctors data={data} />
-        <PatientResponse data={data} />
+      </div>
+      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+        <Funnel data={data} />
         <Statuses data={data} />
       </div>
-      <RecentDecisions data={data} />
     </div>
   );
 }
@@ -112,18 +98,27 @@ function DashboardView() {
 function Kpis({ data }: { data: Dashboard }) {
   const { agreement, details_agreement: details, summary, latency } = data;
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[2fr_1fr_1fr]">
+      {/* Согласие и полное совпадение — одна плитка: второе уточняет первое */}
       <StatTile
         hero
         label="Врач согласился с AI"
         value={pct(agreement.rate)}
-        note={`${agreement.agreed} из ${agreement.total} решений с рекомендацией AI`}
-        className="md:col-span-2 xl:col-span-1 xl:row-span-1"
-      />
-      <StatTile
-        label="Совпали детали — специалист и исследования"
-        value={pct(details.rate)}
-        note={`${details.agreed} из ${details.total}, где тип совпал и AI предложил детали`}
+        note={
+          <>
+            {agreement.agreed} из {agreement.total} решений с рекомендацией AI
+            {details.total > 0 && (
+              <>
+                {" · "}
+                <span className="text-foreground">
+                  полностью, со специалистом и исследованиями, — {pct(details.rate)}
+                </span>{" "}
+                ({details.agreed} из {details.total})
+              </>
+            )}
+          </>
+        }
+        className="md:col-span-2 xl:col-span-1"
       />
       <StatTile
         label="Время ответа модели"
@@ -136,33 +131,6 @@ function Kpis({ data }: { data: Dashboard }) {
         note={`успешных ответов: ${summary.ai_runs} · решений без AI: ${summary.decisions_without_ai}`}
       />
     </div>
-  );
-}
-
-function hasConfidence(data: Dashboard) {
-  const { high, low } = data.agreement_by_confidence;
-  return high.total + low.total > 0;
-}
-
-function ByConfidence({ data }: { data: Dashboard }) {
-  const { threshold, high, low } = data.agreement_by_confidence;
-  const t = pct(threshold);
-  const insight =
-    high.rate != null && low.rate != null && high.total && low.total
-      ? high.rate > low.rate
-        ? "Когда модель уверена, врачи соглашаются с ней заметно чаще."
-        : "Уверенность модели пока не влияет на согласие врачей."
-      : null;
-  return (
-    <Section
-      title="Согласие и уверенность модели"
-      note={insight ?? `Порог высокой уверенности — ${t}`}
-    >
-      <div className="grid gap-6">
-        <RateRow label={`Уверенность ≥ ${t}`} sub="модель уверена" rate={high} />
-        <RateRow label={`Уверенность < ${t}`} sub="модель сомневается" rate={low} />
-      </div>
-    </Section>
   );
 }
 
@@ -182,20 +150,46 @@ function Matrix({ data }: { data: Dashboard }) {
   );
 }
 
+const TOP_DOCTORS = 5;
+
 function Doctors({ data }: { data: Dashboard }) {
   const label = useLabels();
+  const [all, setAll] = useState(false);
+  // Backend отдаёт врачей по убыванию согласия с AI
+  const rows = all ? data.by_doctor : data.by_doctor.slice(0, TOP_DOCTORS);
   return (
-    <Section title="По врачам" note="Доля решений, совпавших с рекомендацией AI">
+    <Section
+      title="Согласие с AI по врачам"
+      note="Лидеры сверху. «Полностью» — совпали и специалист, и исследования."
+    >
       {data.by_doctor.length ? (
         <div className="grid gap-5">
-          {data.by_doctor.map((d) => (
+          {rows.map((d, i) => (
             <RateRow
               key={d.doctor_id}
-              label={d.full_name}
-              sub={`${label("specialists", d.specialty)} · решений: ${d.decisions}`}
+              label={
+                <span>
+                  <span className="mr-2 text-muted-foreground tabular-nums">{i + 1}.</span>
+                  {d.full_name}
+                </span>
+              }
+              sub={`${label("specialists", d.specialty)} · решений: ${d.decisions}${
+                d.details_total ? ` · полностью ${pct(d.details_rate)}` : ""
+              }`}
               rate={d}
             />
           ))}
+          {data.by_doctor.length > TOP_DOCTORS && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="justify-self-center"
+              onClick={() => setAll((v) => !v)}
+            >
+              {all ? <ChevronUp /> : <ChevronDown />}
+              {all ? "Только лидеры" : `Показать всех врачей (${data.by_doctor.length})`}
+            </Button>
+          )}
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">Решений пока нет</p>
@@ -204,20 +198,82 @@ function Doctors({ data }: { data: Dashboard }) {
   );
 }
 
-function PatientResponse({ data }: { data: Dashboard }) {
+const FUNNEL_SCOPES = ["all", "repeat_appointment", "specialist_consult", "additional_research"];
+
+/** Воронка после уведомления: от отправки до записи по всем направлениям. */
+function Funnel({ data }: { data: Dashboard }) {
+  const [scope, setScope] = useState("all");
+  const row = data.funnel.find((r) => r.scope === scope);
+  const steps = row
+    ? [
+        { label: "Уведомление отправлено", n: row.sent },
+        { label: "Прочитали", n: row.read },
+        { label: "Записались хотя бы по одному направлению", n: row.booked_any },
+        { label: "Записались по всем направлениям", n: row.booked_all },
+      ]
+    : [];
   return (
-    <Section title="Пациенты после уведомления" note="Доля записавшихся на приём">
-      <div className="grid gap-5">
-        {data.notifications.map((n) => (
-          <RateRow
-            key={n.recommendation}
-            label={RECOMMENDATION_LABELS[n.recommendation as RecommendationType]}
-            sub={`отправлено ${n.sent} · отказались ${n.declined} · ждут ответа ${n.pending}`}
-            rate={{ agreed: n.booked, total: n.sent, rate: n.sent ? n.booked_rate : null }}
-            unit="пациентов"
-          />
-        ))}
-      </div>
+    <Section
+      title="Что делают пациенты после уведомления"
+      note="Доля — от отправленных уведомлений, по которым нужно записаться"
+    >
+      <Tabs value={scope} onValueChange={(v) => setScope(v as string)}>
+        <TabsList className="flex-wrap">
+          {FUNNEL_SCOPES.map((s) => (
+            <TabsTrigger key={s} value={s}>
+              {s === "all" ? "Все" : RECOMMENDATION_LABELS[s as RecommendationType]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      {!row || !row.sent ? (
+        <p className="text-sm text-muted-foreground">Уведомлений пока нет</p>
+      ) : (
+        <div className="grid gap-3">
+          {steps.map((step, i) => {
+            const share = step.n / row.sent;
+            return (
+              <Tip
+                key={step.label}
+                content={`${step.n} из ${row.sent} · ${pct(share, 1)}`}
+                className="grid gap-1.5 rounded-xl focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <div className="flex items-baseline justify-between gap-3 text-sm">
+                  <span>
+                    <span className="mr-2 text-muted-foreground tabular-nums">{i + 1}</span>
+                    {step.label}
+                  </span>
+                  <span>
+                    <span className="text-xl font-medium tabular-nums">{step.n}</span>
+                    <span className="ml-2 text-xs text-muted-foreground tabular-nums">
+                      {pct(share)}
+                    </span>
+                  </span>
+                </div>
+                {/* Воронка: каждая ступень — доля от отправленных */}
+                <div className="h-8 w-full overflow-hidden rounded-lg bg-accent">
+                  <div
+                    className="h-full rounded-lg bg-primary transition-[width]"
+                    style={{
+                      width: `${Math.max(share * 100, step.n ? 2 : 0)}%`,
+                      opacity: 1 - i * 0.15,
+                    }}
+                  />
+                </div>
+              </Tip>
+            );
+          })}
+          <div className="flex items-center justify-between rounded-xl bg-background px-3 py-2 text-sm">
+            <span className="text-muted-foreground">Отказались от записи</span>
+            <span>
+              <span className="font-medium tabular-nums">{row.declined}</span>
+              <span className="ml-2 text-xs text-muted-foreground tabular-nums">
+                {pct(row.declined / row.sent)}
+              </span>
+            </span>
+          </div>
+        </div>
+      )}
     </Section>
   );
 }
@@ -249,68 +305,6 @@ function Statuses({ data }: { data: Dashboard }) {
           </Tip>
         ))}
       </div>
-    </Section>
-  );
-}
-
-function RecentDecisions({ data }: { data: Dashboard }) {
-  const label = useLabels();
-  return (
-    <Section title="Последние решения">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Пациент</TableHead>
-            <TableHead>AI</TableHead>
-            <TableHead>Врач</TableHead>
-            <TableHead>Совпадение</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {data.recent_decisions.map((d) => (
-            <TableRow key={d.decision_id}>
-              <TableCell>
-                <Link href={`/studies/${d.study_id}`} className="font-medium hover:text-primary">
-                  {d.patient_name}
-                </Link>
-                <div className="text-xs text-muted-foreground">
-                  {label("study_types", d.study_type)} · {fmtDateTime(d.created_at)}
-                </div>
-              </TableCell>
-              <TableCell>
-                {d.ai_recommendation ? (
-                  <>
-                    <div>{RECOMMENDATION_LABELS[d.ai_recommendation as RecommendationType]}</div>
-                    {d.ai_confidence != null && (
-                      <div className="text-xs text-muted-foreground tabular-nums">
-                        уверенность {pct(d.ai_confidence)}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </TableCell>
-              <TableCell>
-                <div>
-                  {d.chosen_types
-                    .map((t) => RECOMMENDATION_LABELS[t as RecommendationType])
-                    .join(" + ")}
-                </div>
-                <div className="text-xs text-muted-foreground">{d.doctor_name}</div>
-              </TableCell>
-              <TableCell>
-                <div className="flex flex-wrap gap-1">
-                  <AgreementBadge accepted={d.accepted_ai} />
-                  {d.details_match === false && (
-                    <Badge className="bg-amber-100 text-amber-800">детали отличаются</Badge>
-                  )}
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
     </Section>
   );
 }

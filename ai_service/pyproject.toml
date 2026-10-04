@@ -21,4 +21,4 @@ dev = [
 line-length = 100
 target-version = "py311"
 # Код AI-команды копируется как есть — не форматируем и не линтим его
-extend-exclude = ["analysis.py", "bft_templates.py"]
+extend-exclude = ["analysis.py", "bft_templates.py", "guidelines.py", "b2c.py"]

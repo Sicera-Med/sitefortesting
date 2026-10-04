@@ -24,12 +24,12 @@ def test_counts(store):
     roles = Counter(u.role for u in store.users.values())
     assert roles[Role.CHIEF] == 1
     assert roles[Role.MANAGER] == 1
-    assert roles[Role.DOCTOR] == 7
+    assert roles[Role.DOCTOR] == 11
     assert roles[Role.PATIENT] == 10
-    assert len(store.studies) == 15
+    assert len(store.studies) == 16
     # Ответов AI в seed нет: всё, что без решения, ждёт автоанализа
     assert Counter(s.status for s in store.studies.values()) == {
-        S.NEW: 9,
+        S.NEW: 10,
         S.NOTIFIED: 5,  # уведомление уходит сразу после решения
         S.COMPLETED: 1,
     }

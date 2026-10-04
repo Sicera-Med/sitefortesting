@@ -28,7 +28,6 @@ def _study(status: StudyStatus = S.AI_READY, doctor_id: str = "usr_1") -> Study:
         status=status,
         performed_at=now,
         created_at=now,
-        report_text="",
     )
 
 

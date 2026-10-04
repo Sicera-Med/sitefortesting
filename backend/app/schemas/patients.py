@@ -7,13 +7,14 @@ from pydantic import AwareDatetime, BaseModel
 
 from app.domain.enums import (
     AppointmentStatus,
+    PatientActionType,
     RecommendationType,
     StudyType,
 )
 from app.schemas.common import BookingProgress, DoctorBrief, RequirementOut
 from app.schemas.studies import CardAppointmentOut, NotificationOut
 from app.services.appointments import AppointmentView, DaySlots
-from app.services.notifications import PatientNotificationView
+from app.services.notifications import PatientNotificationView, PatientStudyView
 
 # --- Уведомления ---
 
@@ -27,6 +28,18 @@ class NotificationStudyBrief(BaseModel):
     performed_at: datetime
 
 
+class TermOut(BaseModel):
+    term: str
+    explanation: str
+
+
+class ExplanationOut(BaseModel):
+    """B2C AI-команды: что значит заключение простым языком."""
+
+    summary: str
+    terms: list[TermOut]
+
+
 class PatientNotificationOut(BaseModel):
     notification: NotificationOut
     recommendations: list[RecommendationType]
@@ -38,6 +51,7 @@ class PatientNotificationOut(BaseModel):
     requirements: list[RequirementOut]
     booking: BookingProgress | None
     appointments: list[CardAppointmentOut]
+    explanation: ExplanationOut | None  # B2C: объяснение заключения, когда готово
 
     @classmethod
     def build(cls, v: PatientNotificationView) -> PatientNotificationOut:
@@ -56,6 +70,37 @@ class PatientNotificationOut(BaseModel):
             requirements=[RequirementOut.build(r) for r in v.requirements],
             booking=BookingProgress.build(v.requirements),
             appointments=[CardAppointmentOut.build(a, doctor) for a, doctor in v.appointments],
+            explanation=ExplanationOut.model_validate(v.notification.explanation)
+            if v.notification.explanation
+            else None,
+        )
+
+
+class PatientStudyOut(BaseModel):
+    """Исследование в кабинете пациента: статус и решение врача, без текста протокола."""
+
+    id: str
+    study_type: StudyType
+    body_region: str
+    performed_at: datetime
+    treating_doctor: DoctorBrief
+    recommendations: list[RecommendationType] | None  # None — врач ещё не решил
+    notification_id: str | None
+    patient_action: PatientActionType | None
+    booking: BookingProgress | None
+
+    @classmethod
+    def build(cls, v: PatientStudyView) -> PatientStudyOut:
+        return cls(
+            id=v.study.id,
+            study_type=v.study.study_type,
+            body_region=v.study.body_region,
+            performed_at=v.study.performed_at,
+            treating_doctor=DoctorBrief.build(v.treating_doctor),
+            recommendations=list(v.decision.chosen_types) if v.decision else None,
+            notification_id=v.notification.id if v.notification else None,
+            patient_action=v.notification.patient_action if v.notification else None,
+            booking=BookingProgress.build(v.requirements),
         )
 
 

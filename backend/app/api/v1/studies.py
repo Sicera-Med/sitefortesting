@@ -3,7 +3,9 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Body, Query
 
 from app.api.deps import ChiefUser, DoctorUser, StaffUser, StudyServiceDep
+from app.core.clock import utcnow
 from app.domain.enums import StudyStatus
+from app.schemas.common import PatientBrief
 from app.schemas.studies import (
     AuditEventOut,
     DecisionIn,
@@ -12,10 +14,24 @@ from app.schemas.studies import (
     ReassignIn,
     StudyCard,
     StudyHistoryOut,
+    StudyIn,
     StudyListItem,
 )
 
 router = APIRouter(prefix="/studies", tags=["studies"])
+
+
+@router.post("", response_model=StudyCard, summary="Новое исследование из DICOM SR")
+async def create_study(body: StudyIn, user: DoctorUser, service: StudyServiceDep) -> StudyCard:
+    return StudyCard.build(service.create(user, **body.model_dump()))
+
+
+@router.get(
+    "/patients", response_model=list[PatientBrief], summary="Пациенты (для нового исследования)"
+)
+async def patients(user: StaffUser, service: StudyServiceDep) -> list[PatientBrief]:
+    now = utcnow()
+    return [PatientBrief.build(p, now) for p in service.patients(user)]
 
 
 @router.get("", response_model=list[StudyListItem], summary="Список исследований")

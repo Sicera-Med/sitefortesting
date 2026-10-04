@@ -4,8 +4,13 @@ export type Role = "chief" | "manager" | "doctor" | "patient";
 export type Sex = "m" | "f";
 export type StudyType = "xray" | "ct" | "mri" | "ultrasound" | "mammography";
 export type StudyStatus = "new" | "ai_ready" | "ai_failed" | "decided" | "notified" | "completed";
+// urgent_hospitalization и no_pathology — только отдельно, без записи
 export type RecommendationType =
-  "repeat_appointment" | "specialist_consult" | "additional_research" | "no_pathology"; // патологии не выявлено — только отдельно, записываться не нужно
+  | "repeat_appointment"
+  | "specialist_consult"
+  | "additional_research"
+  | "urgent_hospitalization"
+  | "no_pathology";
 export type AISource = "mock" | "http" | "manual";
 export type NotificationChannel = "sms" | "email" | "social";
 export type NotificationStatus = "sent" | "read";
@@ -89,6 +94,33 @@ export interface RecommendationDetails {
   research_types?: string[];
 }
 
+/** Документ, на котором основан пункт: КР Минздрава, методичка НПКЦ ДиТ и т. п. */
+export interface SourceRef {
+  text: string; // «КР «…» (Минздрав, 2025), стр. 89»
+  document: string | null;
+  organization: string | null;
+  year: string | number | null;
+  pages: string | null;
+  url: string | null; // официальная страница (PDF — сразу на нужной странице)
+}
+
+export interface AIItem {
+  code: string;
+  reason: string | null;
+  timing: string | null;
+  source_refs: SourceRef[];
+  unconfirmed_sources: string[]; // модель сослалась, но в документе такого действия нет
+}
+
+export interface AIOption {
+  type: RecommendationType;
+  recommended: boolean;
+  rationale: string | null;
+  items: AIItem[];
+  source_refs: SourceRef[];
+  unconfirmed_sources: string[];
+}
+
 export interface Inference {
   id: string;
   source: AISource;
@@ -100,6 +132,8 @@ export interface Inference {
   ranked_options: RankedOption[];
   reasons: Reason[];
   details: RecommendationDetails;
+  options: AIOption[]; // все варианты модели, основной первым ([] — старый формат)
+  guidelines_mode: string | null; // справочник: по словам протокола / весь
   latency_ms: number;
   created_at: string;
 }
@@ -137,13 +171,52 @@ export interface Notification {
   id: string;
   decision_id: string;
   channels: NotificationChannel[]; // все доступные контакты пациента
-  text: string;
+  text: string; // подробный — на сайте
+  short_text: string; // короткий со ссылкой — в SMS / email / соцсети
   status: NotificationStatus;
   sent_at: string;
   read_at: string | null;
   patient_action: PatientActionType | null;
   action_at: string | null;
   appointment_id: string | null;
+  // История отправок (имитация каналов) и напоминания: раз в неделю, до max_reminders раз
+  deliveries: Delivery[];
+  reminders_sent: number;
+  max_reminders: number;
+  next_reminder_at: string | null;
+}
+
+export interface Delivery {
+  at: string;
+  channel: NotificationChannel;
+  target: string; // телефон, email или «Telegram @…»
+  attempt: number; // 0 — первое уведомление, 1.. — напоминания
+  text: string; // что ушло в канал
+  status: DeliveryStatus;
+  detail: string | null; // ошибка канала или почему имитация
+}
+
+/** pending — в очереди, sent — ушло через SMSPilot / SMTP, simulated — имитация. */
+export type DeliveryStatus = "pending" | "sent" | "failed" | "simulated";
+
+export type SocialNetwork = "telegram" | "vk" | "whatsapp" | "max";
+
+export interface Social {
+  network: SocialNetwork;
+  handle: string;
+}
+
+/** Исследование в кабинете пациента: статус и решение врача, без текста протокола. */
+export interface PatientStudy {
+  id: string;
+  study_type: StudyType;
+  body_region: string;
+  performed_at: string;
+  treating_doctor: DoctorBrief;
+  recommendations: RecommendationType[] | null; // null — врач ещё не решил
+  notification_id: string | null;
+  patient_action: PatientActionType | null;
+  booking: BookingProgress | null;
 }
 
 // --- Study ---
@@ -196,6 +269,15 @@ export interface AIRetry {
   stopped: boolean; // автоповтор остановлен — только ручная отправка
 }
 
+export interface StudyIn {
+  patient_id: string;
+  study_type: StudyType;
+  body_region: string;
+  description: string; // раздел «Описание» DICOM SR: строки «Поле- значение»
+  conclusion?: string | null;
+  treating_doctor_id?: string | null;
+}
+
 export interface StudyCard {
   id: string;
   status: StudyStatus;
@@ -203,6 +285,9 @@ export interface StudyCard {
   body_region: string;
   performed_at: string;
   created_at: string;
+  // Протокол: раздел «Описание» DICOM SR (поля БФТ) и заключение; report_text — как уходит в AI
+  sr_fields: { name: string; value: string }[];
+  conclusion: string | null;
   report_text: string;
   patient: PatientBrief;
   doctor: DoctorBrief;
@@ -240,6 +325,7 @@ export interface PatientNotification {
   requirements: Requirement[];
   booking: BookingProgress | null;
   appointments: CardAppointment[];
+  explanation: { summary: string; terms: { term: string; explanation: string }[] } | null;
 }
 
 export interface DaySlots {
@@ -280,7 +366,8 @@ export interface Account {
   // Только у пациента
   birth_date: string | null;
   phone: string | null;
-  social: string | null;
+  contact_email: string | null; // почта для уведомлений; null — email входа
+  socials: Social[];
   notify_channels: NotificationChannel[];
   available_channels: NotificationChannel[]; // есть контакт для канала
 }
@@ -288,7 +375,8 @@ export interface Account {
 export interface AccountPatch {
   email?: string;
   phone?: string;
-  social?: string;
+  contact_email?: string; // "" — уведомления на email входа
+  socials?: Social[]; // весь список целиком
   notify_channels?: NotificationChannel[];
 }
 
@@ -341,7 +429,19 @@ export interface Dashboard {
     full_name: string;
     specialty: string | null;
     decisions: number;
+    details_agreed: number;
+    details_total: number;
+    details_rate: number | null; // полное совпадение с AI (тип + специалист/исследования)
   })[];
+  /** Воронка после уведомления; scope — "all" или тип направления. */
+  funnel: {
+    scope: string;
+    sent: number;
+    read: number;
+    booked_any: number;
+    booked_all: number;
+    declined: number;
+  }[];
   notifications: {
     recommendation: string;
     sent: number;

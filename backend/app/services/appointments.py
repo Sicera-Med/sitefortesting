@@ -239,8 +239,15 @@ class AppointmentService:
         appointments = self.store.list_appointments(notification_id=notification.id)
         if rules.all_covered(decision, appointments):
             complete_study(self.store, notification.study_id)
+            notification.next_reminder_at = None  # записался — напоминать не о чем
         else:
             reopen_study(self.store, notification.study_id)
+            # Отменил запись — снова напоминаем (если лимит напоминаний не исчерпан)
+            if (
+                notification.next_reminder_at is None
+                and notification.reminders_sent < rules.MAX_REMINDERS
+            ):
+                notification.next_reminder_at = utcnow() + rules.REMINDER_INTERVAL
 
     def cancel(self, user: User, appointment_id: str) -> AppointmentView:
         appointment = self.store.get_appointment(appointment_id)

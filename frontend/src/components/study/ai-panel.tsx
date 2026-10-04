@@ -3,7 +3,9 @@
 import { AlertTriangle, Bot, Loader2, RotateCw, Send } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { SourceLinks } from "@/components/study/source-links";
 import { confidenceTone } from "@/components/study-badges";
+import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -175,7 +177,101 @@ function Bar({ value, className }: { value: number; className?: string }) {
   );
 }
 
+/** Варианты модели AI-команды: основной и альтернативы, пункты с причиной, сроком и источником. */
+function OptionsView({ ai }: { ai: Inference }) {
+  const label = useLabels();
+  const itemLabel = (type: string, code: string) =>
+    type === "specialist_consult" ? label("specialists", code) : label("research_types", code);
+  return (
+    <section className="grid gap-3">
+      {ai.options.map((o) => (
+        <div
+          key={o.type}
+          className={cn(
+            "grid gap-3 rounded-xl p-4",
+            o.recommended
+              ? o.type === "urgent_hospitalization"
+                ? "border-2 border-red-300 bg-red-50"
+                : "border-2 border-primary/30 bg-primary/5"
+              : "bg-background",
+          )}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className={cn("font-medium", o.recommended && "text-lg")}>
+              {RECOMMENDATION_LABELS[o.type]}
+            </span>
+            <Badge variant={o.recommended ? "default" : "outline"}>
+              {o.recommended ? "Основной вариант" : "Альтернатива"}
+            </Badge>
+          </div>
+          {o.rationale && <p className="text-sm">{o.rationale}</p>}
+          {o.items.length > 0 && (
+            <ul className="grid gap-2.5">
+              {o.items.map((i) => (
+                <li key={i.code} className="grid gap-1 rounded-lg bg-card/70 p-2.5 text-sm">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="font-medium">{itemLabel(o.type, i.code)}</span>
+                    {i.timing && (
+                      <span className="text-xs text-muted-foreground">срок: {i.timing}</span>
+                    )}
+                  </div>
+                  {i.reason && <span className="text-muted-foreground">{i.reason}</span>}
+                  <SourceLinks refs={i.source_refs} unconfirmed={i.unconfirmed_sources} />
+                </li>
+              ))}
+            </ul>
+          )}
+          {(o.source_refs.length > 0 || !o.items.length) && (
+            <SourceLinks refs={o.source_refs} unconfirmed={o.unconfirmed_sources} />
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function InferenceView({ ai }: { ai: Inference }) {
+  if (ai.options.length) return <InferenceV2 ai={ai} />;
+  return <InferenceV1 ai={ai} />;
+}
+
+/** Формат AI-команды: варианты с источниками + находки. */
+function InferenceV2({ ai }: { ai: Inference }) {
+  return (
+    <div className="grid gap-5">
+      <OptionsView ai={ai} />
+      <section className="grid gap-2">
+        <h3 className="text-sm font-medium">Находки в протоколе</h3>
+        <ol className="grid list-decimal gap-1.5 pl-5 text-sm marker:text-muted-foreground">
+          {ai.reasons.map((r) => (
+            <li key={r.code}>{r.label}</li>
+          ))}
+        </ol>
+      </section>
+      <Footer ai={ai} />
+    </div>
+  );
+}
+
+function Footer({ ai }: { ai: Inference }) {
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1 border-t pt-3 text-xs text-muted-foreground">
+      <span>
+        Модель:{" "}
+        <span className="font-mono">
+          {ai.model_name} {ai.model_version}
+        </span>
+      </span>
+      <span>Источник: {SOURCE_LABELS[ai.source]}</span>
+      {ai.guidelines_mode && <span>Справочник КР: {ai.guidelines_mode}</span>}
+      <span>Время ответа: {ai.latency_ms} мс</span>
+      <span>{fmtDateTime(ai.created_at)}</span>
+    </div>
+  );
+}
+
+/** Старый формат (уверенность, оценки вариантов) — для ответов без options. */
+function InferenceV1({ ai }: { ai: Inference }) {
   // Модель коллег не даёт ни уверенности, ни оценок вариантов, ни весов причин —
   // тогда показываем порядок (от главного к второстепенному), без процентов
   const weighted = ai.reasons.every((r) => r.weight != null);
@@ -272,17 +368,7 @@ function InferenceView({ ai }: { ai: Inference }) {
         )}
       </section>
 
-      <div className="flex flex-wrap gap-x-4 gap-y-1 border-t pt-3 text-xs text-muted-foreground">
-        <span>
-          Модель:{" "}
-          <span className="font-mono">
-            {ai.model_name} {ai.model_version}
-          </span>
-        </span>
-        <span>Источник: {SOURCE_LABELS[ai.source]}</span>
-        <span>Время ответа: {ai.latency_ms} мс</span>
-        <span>{fmtDateTime(ai.created_at)}</span>
-      </div>
+      <Footer ai={ai} />
     </div>
   );
 }

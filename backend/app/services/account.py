@@ -8,7 +8,7 @@ from app.core.errors import ConflictError, InvalidInputError
 from app.core.security import hash_password, verify_password
 from app.domain import rules
 from app.domain.enums import NotificationChannel, Role
-from app.domain.models import Patient, User
+from app.domain.models import Patient, Social, User
 from app.services import audit
 from app.store import Store
 
@@ -20,6 +20,16 @@ class AccountView:
     user: User
     patient: Patient | None
     available_channels: tuple[NotificationChannel, ...]
+
+
+def _clean_socials(items: list[Social]) -> tuple[Social, ...]:
+    """Пустые адреса отбрасываем, повторы (сеть + адрес) схлопываем."""
+    seen: dict[tuple[str, str], Social] = {}
+    for s in items:
+        handle = s.handle.strip()
+        if handle:
+            seen.setdefault((s.network, handle.lower()), Social(s.network, handle))
+    return tuple(seen.values())
 
 
 class AccountService:
@@ -37,7 +47,8 @@ class AccountService:
         *,
         email: str | None = None,
         phone: str | None = None,
-        social: str | None = None,
+        contact_email: str | None = None,
+        socials: list[Social] | None = None,
         notify_channels: list[NotificationChannel] | None = None,
     ) -> AccountView:
         """Контакты меняет сам пользователь; ФИО и специальность врача — главврач."""
@@ -50,15 +61,26 @@ class AccountService:
                 raise ConflictError("Этот email уже занят")
             user.email = changes["email"] = email
         patient = self.store.patient_by_user(user.id) if user.role is Role.PATIENT else None
-        if patient is None and (phone is not None or social is not None or notify_channels):
+        if patient is None and (
+            phone is not None or contact_email is not None or socials is not None or notify_channels
+        ):
             raise InvalidInputError("Телефон и каналы уведомлений — только у пациента")
         if patient is not None:
             if phone is not None and phone.strip() != patient.phone:
                 if not phone.strip():
                     raise InvalidInputError("Телефон нужен для связи с клиникой")
                 patient.phone = changes["phone"] = phone.strip()
-            if social is not None and (social.strip() or None) != patient.social:
-                patient.social = changes["social"] = social.strip() or None
+            if contact_email is not None:
+                clean_email = contact_email.strip().lower() or None
+                if clean_email is not None and "@" not in clean_email:
+                    raise InvalidInputError("Некорректный email для уведомлений")
+                if clean_email != patient.contact_email:
+                    patient.contact_email = changes["contact_email"] = clean_email
+            if socials is not None:
+                clean = _clean_socials(socials)
+                if clean != patient.socials:
+                    patient.socials = clean
+                    changes["socials"] = [str(s.network) for s in clean]
             if notify_channels is not None:
                 chosen = frozenset(notify_channels)
                 if chosen != patient.notify_channels:

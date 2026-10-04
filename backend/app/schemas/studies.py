@@ -5,9 +5,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.domain import rules
 from app.domain.enums import (
     AISource,
     AppointmentStatus,
+    DeliveryStatus,
     NotificationChannel,
     NotificationStatus,
     PatientActionType,
@@ -33,6 +35,34 @@ class ReasonOut(BaseModel):
     weight: float | None
 
 
+class SourceRefOut(BaseModel):
+    """Документ, на котором основан пункт: КР Минздрава, методичка НПКЦ ДиТ и т. п."""
+
+    text: str  # «КР «…» (Минздрав, 2025), стр. 89»
+    document: str | None = None
+    organization: str | None = None
+    year: str | int | None = None
+    pages: str | None = None
+    url: str | None = None  # официальная страница документа (PDF — сразу на странице)
+
+
+class AIItemOut(BaseModel):
+    code: str
+    reason: str | None
+    timing: str | None
+    source_refs: list[SourceRefOut]
+    unconfirmed_sources: list[str]  # модель сослалась, но в документе такого действия нет
+
+
+class AIOptionOut(BaseModel):
+    type: RecommendationType
+    recommended: bool
+    rationale: str | None
+    items: list[AIItemOut]
+    source_refs: list[SourceRefOut]
+    unconfirmed_sources: list[str]
+
+
 class InferenceOut(BaseModel):
     id: str
     source: AISource
@@ -44,6 +74,8 @@ class InferenceOut(BaseModel):
     ranked_options: list[RankedOptionOut]
     reasons: list[ReasonOut]
     details: dict[str, Any]
+    options: list[AIOptionOut]  # все варианты модели, основной первым ([] — старый формат)
+    guidelines_mode: str | None
     latency_ms: int
     created_at: datetime
 
@@ -60,6 +92,8 @@ class InferenceOut(BaseModel):
             ranked_options=[RankedOptionOut(type=o.type, score=o.score) for o in i.ranked_options],
             reasons=[ReasonOut(code=r.code, label=r.label, weight=r.weight) for r in i.reasons],
             details=i.details,
+            options=[AIOptionOut.model_validate(o) for o in i.options],
+            guidelines_mode=i.guidelines_mode,
             latency_ms=i.latency_ms,
             created_at=i.created_at,
         )
@@ -71,6 +105,18 @@ class InferenceBrief(BaseModel):
 
 
 # --- Решение ---
+
+
+class StudyIn(BaseModel):
+    """Новое исследование из сырых данных DICOM SR."""
+
+    patient_id: str
+    study_type: StudyType
+    body_region: str
+    description: str = Field(max_length=20_000)  # раздел «Описание»: строки «Поле- значение»
+    conclusion: str | None = Field(default=None, max_length=5_000)
+    performed_at: datetime | None = None
+    treating_doctor_id: str | None = None  # главврач выбирает; врачу — он сам
 
 
 class ReassignIn(BaseModel):
@@ -134,17 +180,33 @@ class DecisionBrief(BaseModel):
 # --- Уведомление и запись (в карточке) ---
 
 
+class DeliveryOut(BaseModel):
+    at: datetime
+    channel: NotificationChannel
+    target: str  # телефон, email или «Telegram @…»
+    attempt: int  # 0 — первое уведомление, 1.. — напоминания
+    text: str  # что ушло в канал (коротко, со ссылкой на сайт)
+    status: DeliveryStatus  # pending / sent / failed / simulated
+    detail: str | None  # ошибка канала или почему имитация
+
+
 class NotificationOut(BaseModel):
     id: str
     decision_id: str
     channels: list[NotificationChannel]
-    text: str
+    text: str  # подробный — для сайта
+    short_text: str  # короткий со ссылкой — для SMS / email / соцсетей
     status: NotificationStatus
     sent_at: datetime
     read_at: datetime | None
     patient_action: PatientActionType | None
     action_at: datetime | None
     appointment_id: str | None
+    # История отправок (имитация каналов) и напоминания
+    deliveries: list[DeliveryOut]
+    reminders_sent: int
+    max_reminders: int
+    next_reminder_at: datetime | None
 
     @classmethod
     def build(cls, n: Notification) -> NotificationOut:
@@ -153,12 +215,28 @@ class NotificationOut(BaseModel):
             decision_id=n.decision_id,
             channels=list(n.channels),
             text=n.text,
+            short_text=n.short_text,
             status=n.status,
             sent_at=n.sent_at,
             read_at=n.read_at,
             patient_action=n.patient_action,
             action_at=n.action_at,
             appointment_id=n.appointment_id,
+            deliveries=[
+                DeliveryOut(
+                    at=d.at,
+                    channel=d.channel,
+                    target=d.target,
+                    attempt=d.attempt,
+                    text=d.text,
+                    status=d.status,
+                    detail=d.detail,
+                )
+                for d in n.deliveries
+            ],
+            reminders_sent=n.reminders_sent,
+            max_reminders=rules.MAX_REMINDERS,
+            next_reminder_at=n.next_reminder_at,
         )
 
 
@@ -226,6 +304,11 @@ class StudyListItem(BaseModel):
         )
 
 
+class SRFieldOut(BaseModel):
+    name: str
+    value: str
+
+
 class AIRetryOut(BaseModel):
     """Автоповтор после сбоя AI."""
 
@@ -241,6 +324,9 @@ class StudyCard(BaseModel):
     body_region: str
     performed_at: datetime
     created_at: datetime
+    # Протокол: раздел «Описание» DICOM SR и заключение; report_text — как он уходит в AI
+    sr_fields: list[SRFieldOut]
+    conclusion: str | None
     report_text: str
     patient: PatientBrief
     doctor: DoctorBrief
@@ -264,6 +350,8 @@ class StudyCard(BaseModel):
             body_region=s.body_region,
             performed_at=s.performed_at,
             created_at=s.created_at,
+            sr_fields=[SRFieldOut(name=f.name, value=f.value) for f in s.sr_fields],
+            conclusion=s.conclusion,
             report_text=s.report_text,
             patient=PatientBrief.build(v.patient, s.performed_at),
             doctor=DoctorBrief.build(v.doctor),

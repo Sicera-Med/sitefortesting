@@ -23,7 +23,11 @@ const NAV: Record<Role, { href: string; label: string }[]> = {
     { href: "/schedule", label: "Расписание" },
   ],
   manager: [{ href: "/dashboard", label: "Дашборд" }],
-  patient: [{ href: "/patient", label: "Мой кабинет" }],
+  patient: [
+    { href: "/patient", label: "Рекомендации" },
+    { href: "/patient/studies", label: "Исследования" },
+    { href: "/patient/calendar", label: "Календарь" },
+  ],
 };
 
 function FullScreenSpinner() {
@@ -51,6 +55,12 @@ export function AppShell({ roles, children }: { roles: Role[]; children: React.R
 
   if (!allowed) return <FullScreenSpinner />;
 
+  // Активный пункт — самый длинный подходящий путь (/patient и /patient/studies)
+  const activeHref = NAV[user.role]
+    .map((i) => i.href)
+    .filter((h) => pathname === h || pathname.startsWith(`${h}/`))
+    .sort((a, b) => b.length - a.length)[0];
+
   return (
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-30 border-b border-border/60 bg-background/95 backdrop-blur">
@@ -65,7 +75,7 @@ export function AppShell({ roles, children }: { roles: Role[]; children: React.R
                 href={item.href}
                 className={cn(
                   "rounded-full px-4 py-2 text-[15px] text-foreground transition-colors hover:text-primary",
-                  pathname.startsWith(item.href) && "bg-accent text-accent-foreground",
+                  item.href === activeHref && "bg-accent text-accent-foreground",
                 )}
               >
                 {item.label}

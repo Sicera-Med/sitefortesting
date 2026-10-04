@@ -1,18 +1,25 @@
 """AI-сервис: HTTP-обёртка над кодом AI-команды для backend (SPEC §6).
 
-Промт, шаблоны БФТ и проверка ответа — из репозитория AI-команды без изменений
-(analysis.py, bft_templates.py, bft_templates.json; источник — user_description @ 7017ae2).
-Вызов модели повторяет их test_of_models.ask().
+Код AI-команды — из их репозитория (user_description @ origin/main 109ce05), без изменений,
+кроме помеченной правки no_pathology в analysis.py:
+- analysis.py — промт, шаблон БФТ + справочник «находка → действие», проверка, источники;
+- guidelines.py, guidelines/*.json — справочник из клинических рекомендаций;
+- bft_templates.py/.json — шаблоны протоколов БФТ;
+- b2c.py (= их test_of_b2c.py) — объяснение заключения пациенту.
 
-POST /ai/v1/analyze: запрос backend (AIRequest) → ответ модели в формате analysis.py
-(recommendation, options_order, specialists, research_types, reasons) + request_id, model,
-warnings (замечания их validate()). Приводит ответ к своему виду backend (ai/contract.py).
+POST /ai/v1/analyze — как их test_of_models.ask(): справочник по словам протокола, а если модель
+просит (need_full_guidelines) — второй запрос с полным справочником; затем validate() и
+attach_sources(). Ответ — их JSON (options, reasons) + request_id, model, warnings,
+guidelines_mode; к source_refs дописываем url официальной страницы документа.
+POST /ai/v1/explain — B2C: summary + explanations для пациента.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -21,10 +28,21 @@ from fastapi import FastAPI, HTTPException
 from huggingface_hub import InferenceClient
 from pydantic import BaseModel, Field
 
-from analysis import build_messages, parse_json, validate
+from analysis import attach_sources, build_messages, guidelines_partial, parse_json, validate
+from guidelines import SOURCES
+
+# b2c.py (их test_of_b2c.py) при импорте читает HF_TOKEN и MODEL — без .env нужны значения
+os.environ.setdefault("HF_TOKEN", "")
+os.environ.setdefault("MODEL", "")
+from b2c import build_input, system_prompt_for, validate_b2c_response
 
 logger = logging.getLogger("ai_service")
-ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+
+# Адреса официальных страниц документов справочника (doc → url) — наша доработка их данных
+with open(os.path.join(BASE_DIR, "source_urls.json"), encoding="utf-8") as _f:
+    SOURCE_URLS: dict[str, str] = json.load(_f)
 
 # Заданы тестами напрямую; иначе берутся из .env при каждом запросе —
 # токен можно вписать в .env без перезапуска сервиса
@@ -41,11 +59,12 @@ def settings() -> tuple[str, str]:
     return os.environ.get("HF_TOKEN", "").strip(), models[0] if models else ""
 
 
-# Тип исследования backend (study_type + body_region) → ключ шаблона БФТ
+# Тип исследования backend (study_type + body_region) → ключ шаблона БФТ / справочника
 TEMPLATE_KEYS = {
     ("xray", "chest"): "xray_chest",
     ("ct", "chest"): "ct_chest",
     ("mammography", "breast"): "mammography",
+    ("ct", "head"): "КТ ГМ",  # шаблона БФТ нет, справочник — по синониму
 }
 # Для исследований без шаблона БФТ модель получает русское название (как в справочнике backend)
 STUDY_LABELS = {
@@ -66,6 +85,14 @@ REGION_LABELS = {
     "breast": "молочные железы",
 }
 
+# Частые ответы Hugging Face — коротко и по-русски, чтобы врач понял причину
+HF_STATUS = {
+    401: "неверный токен Hugging Face (HF_TOKEN)",
+    402: "закончились кредиты Hugging Face — нужен другой токен или оплата",
+    404: "модель не найдена (MODEL)",
+    429: "слишком много запросов к Hugging Face, лимит",
+}
+
 
 class PatientContext(BaseModel):
     age: int | None = None
@@ -83,8 +110,18 @@ class AnalyzeIn(BaseModel):
     patient_context: PatientContext = Field(default_factory=PatientContext)
 
 
+class ExplainIn(BaseModel):
+    """B2C: протокол для объяснения пациенту — описание и заключение раздельно."""
+
+    request_id: str
+    study_type: str
+    body_region: str
+    description: str | None = None
+    conclusion: str | None = None
+
+
 def study_type_for_model(study_type: str, body_region: str) -> str:
-    """Ключ шаблона БФТ или «КТ, почки» — analysis.build_messages сам найдёт шаблон."""
+    """Ключ шаблона БФТ / справочника или «КТ, почки» — analysis.py сам найдёт шаблон."""
     key = TEMPLATE_KEYS.get((study_type, body_region))
     if key:
         return key
@@ -92,8 +129,15 @@ def study_type_for_model(study_type: str, body_region: str) -> str:
     return f"{STUDY_LABELS.get(study_type, study_type)}, {region}"
 
 
+def short_error(exc: Exception) -> str:
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status in HF_STATUS:
+        return f"{HF_STATUS[status]} (HTTP {status})"
+    return f"{exc.__class__.__name__}: {str(exc).splitlines()[0][:200]}"
+
+
 def ask(messages: list[dict[str, str]]) -> str:
-    """Как test_of_models.ask(): те же параметры генерации."""
+    """Как _call() в их test_of_models.py: те же параметры генерации."""
     token, model = settings()
     client = InferenceClient(token=token)
     resp = client.chat_completion(
@@ -105,23 +149,50 @@ def ask(messages: list[dict[str, str]]) -> str:
     return resp.choices[0].message.content or ""  # при нехватке токенов content бывает None
 
 
-# Частые ответы Hugging Face — коротко и по-русски, чтобы врач понял причину
-HF_STATUS = {
-    401: "неверный токен Hugging Face (HF_TOKEN)",
-    402: "закончились кредиты Hugging Face — нужен другой токен или оплата",
-    404: "модель не найдена (MODEL)",
-    429: "слишком много запросов к Hugging Face, лимит",
-}
+def _model_call(messages: list[dict[str, str]], request_id: str) -> str:
+    try:
+        return ask(messages)
+    except Exception as exc:  # сеть, лимиты HF, ошибка модели — backend покажет «AI не отвечает»
+        logger.exception("model call failed: request_id=%s", request_id)
+        raise HTTPException(502, f"Модель недоступна: {short_error(exc)}") from exc
 
 
-def short_error(exc: Exception) -> str:
-    status = getattr(getattr(exc, "response", None), "status_code", None)
-    if status in HF_STATUS:
-        return f"{HF_STATUS[status]} (HTTP {status})"
-    return f"{exc.__class__.__name__}: {str(exc).splitlines()[0][:200]}"
+def _require_settings() -> str:
+    token, model = settings()
+    if not token or not model:
+        raise HTTPException(
+            503, "AI-сервис не настроен: укажите HF_TOKEN и MODEL в ai_service/.env"
+        )
+    return model
 
 
-app = FastAPI(title="Triage AI service", version="0.1.0")
+# source_refs несут имя файла документа — адрес ищем по нему
+_URL_BY_FILE = {SOURCES[doc]["file"]: url for doc, url in SOURCE_URLS.items() if doc in SOURCES}
+
+
+def source_url(ref: dict[str, Any]) -> str | None:
+    """Адрес документа; PDF на официальном сайте — сразу на нужной странице (#page=)."""
+    url = _URL_BY_FILE.get(ref.get("file"))
+    if url and url.lower().endswith(".pdf"):
+        page = re.search(r"\d+", str(ref.get("pages") or ""))
+        if page:
+            url += f"#page={page.group()}"
+    return url
+
+
+def add_urls(parsed: dict[str, Any]) -> None:
+    """К ссылкам на документы (source_refs из attach_sources) — адрес официальной страницы."""
+    for option in parsed.get("options") or []:
+        if not isinstance(option, dict):
+            continue
+        for x in [option, *(option.get("items") or [])]:
+            if not isinstance(x, dict):
+                continue
+            for ref in x.get("source_refs") or []:
+                ref["url"] = source_url(ref)
+
+
+app = FastAPI(title="Triage AI service", version="0.2.0")
 
 
 @app.get("/health")
@@ -132,34 +203,60 @@ def health() -> dict[str, Any]:
 
 @app.post("/ai/v1/analyze")
 def analyze(body: AnalyzeIn) -> dict[str, Any]:
-    # def, не async: FastAPI выполнит блокирующий вызов модели в пуле потоков
-    token, model = settings()
-    if not token or not model:
-        raise HTTPException(
-            503, "AI-сервис не настроен: укажите HF_TOKEN и MODEL в ai_service/.env"
-        )
-    messages = build_messages(
-        study_type_for_model(body.study_type, body.body_region),
-        body.report_text,
-        body.patient_context.model_dump(),
-    )
+    # def, не async: FastAPI выполнит блокирующие вызовы модели в пуле потоков
+    model = _require_settings()
+    study_type = study_type_for_model(body.study_type, body.body_region)
+    context = body.patient_context.model_dump()
     start = time.monotonic()
-    try:
-        raw = ask(messages)
-    except Exception as exc:  # сеть, лимиты HF, ошибка модели — backend покажет «AI не отвечает»
-        logger.exception("model call failed: request_id=%s", body.request_id)
-        raise HTTPException(502, f"Модель недоступна: {short_error(exc)}") from exc
+
+    # Как ask() в их test_of_models.py: сначала справочник по словам протокола,
+    # модель просит полный (need_full_guidelines) — второй запрос
+    raw = _model_call(build_messages(study_type, body.report_text, context), body.request_id)
+    mode = "весь справочник"
+    if guidelines_partial(study_type, body.report_text):
+        mode = "по словам протокола"
+        if (parse_json(raw) or {}).get("need_full_guidelines") is True:
+            messages = build_messages(study_type, body.report_text, context, full_guidelines=True)
+            raw = _model_call(messages, body.request_id)
+            mode = "весь справочник по запросу модели"
     sec = round(time.monotonic() - start, 1)
 
     parsed = parse_json(raw)
     if parsed is None:
         logger.warning("not JSON from model: request_id=%s raw=%r", body.request_id, raw[:500])
         raise HTTPException(502, "Модель вернула ответ не в формате JSON")
-    errors = validate(parsed)
-    logger.info("request_id=%s %ss errors=%s", body.request_id, sec, errors)
+    errors = validate(parsed, study_type)
+    parsed = attach_sources(parsed)  # документ и страницы по id из справочника
+    add_urls(parsed)
+    logger.info("analyze request_id=%s %ss mode=%s errors=%s", body.request_id, sec, mode, errors)
     return {
         **parsed,
         "request_id": body.request_id,
         "model": {"name": model, "version": "hf-inference"},
+        "guidelines_mode": mode,
         "warnings": errors,  # их validate(): backend принимает мягко и сохраняет как warnings
+    }
+
+
+@app.post("/ai/v1/explain")
+def explain(body: ExplainIn) -> dict[str, Any]:
+    """B2C — как ask() в их test_of_b2c.py: объяснение заключения пациенту простым языком."""
+    model = _require_settings()
+    t = {
+        "study_type": study_type_for_model(body.study_type, body.body_region),
+        "description": body.description,
+        "conclusion": body.conclusion,
+    }
+    messages = [
+        {"role": "system", "content": system_prompt_for(t["study_type"])},
+        {"role": "user", "content": build_input(t)},
+    ]
+    parsed = parse_json(_model_call(messages, body.request_id))
+    if not validate_b2c_response(parsed):
+        raise HTTPException(502, "Модель вернула объяснение не в нужном формате")
+    return {
+        "summary": parsed["summary"].strip(),
+        "explanations": parsed["explanations"],
+        "request_id": body.request_id,
+        "model": {"name": model, "version": "hf-inference"},
     }

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from app.ai.base import AIProviderError
-from app.ai.contract import AIRequest
+from app.ai.contract import AIRequest, ExplainRequest
 from app.domain.enums import AISource
 
 FIXTURES_PATH = Path(__file__).parent / "fixtures" / "responses.json"
@@ -57,6 +57,16 @@ class MockAIProvider:
         response = copy.deepcopy(self.pick(request)["response"])
         response["request_id"] = request.request_id
         return response
+
+    async def explain(self, request: ExplainRequest) -> Any:
+        """Тестовое объяснение (только в тестах — mock запрещён вне APP_ENV=test)."""
+        if FAIL_MARKER in f"{request.description} {request.conclusion}":
+            raise AIProviderError("simulated AI failure ([[ai_fail]] marker)")
+        return {
+            "summary": "Тестовое объяснение результата.",
+            "explanations": [{"term": "КТИ", "explanation": "тестовое объяснение термина"}],
+            "request_id": request.request_id,
+        }
 
     async def list_models(self) -> list[dict[str, str]]:
         seen: dict[tuple[str, str], None] = {}

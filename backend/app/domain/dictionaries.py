@@ -6,6 +6,7 @@ RECOMMENDATION_TYPES: dict[str, str] = {
     RecommendationType.REPEAT_APPOINTMENT: "Повторный приём",
     RecommendationType.SPECIALIST_CONSULT: "Консультация специалиста",
     RecommendationType.ADDITIONAL_RESEARCH: "Дополнительное исследование",
+    RecommendationType.URGENT_HOSPITALIZATION: "Экстренная госпитализация",
     RecommendationType.NO_PATHOLOGY: "Патологии не выявлено",
 }
 
@@ -39,6 +40,8 @@ SPECIALISTS: dict[str, str] = {
     "gastroenterologist": "Гастроэнтеролог",
     "endocrinologist": "Эндокринолог",
     "urologist": "Уролог",
+    "vascular_surgeon": "Сердечно-сосудистый (сосудистый) хирург",
+    "radiotherapist": "Радиотерапевт",
 }
 
 RESEARCH_TYPES: dict[str, str] = {
@@ -47,6 +50,12 @@ RESEARCH_TYPES: dict[str, str] = {
     "mri": "МРТ",
     "pet_ct": "ПЭТ-КТ",
     "ultrasound": "УЗИ",
+    "mammography": "Маммография",
+    "ldct": "Низкодозная КТ (НДКТ)",
+    "ct_angiography": "КТ-ангиография",
+    "mri_contrast": "МРТ с контрастированием",
+    "adrenal_ct": "КТ надпочечников по протоколу с вымыванием или МРТ с химическим сдвигом",
+    "echocardiography": "Эхокардиография (ЭхоКГ)",
     "xray": "Рентгенография",
     "biopsy": "Биопсия",
     "bronchoscopy": "Бронхоскопия",

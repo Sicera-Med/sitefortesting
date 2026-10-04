@@ -1,10 +1,14 @@
 "use client";
 
-import { BellRing, CalendarCheck, CalendarX, Circle } from "lucide-react";
+import { BellRing, CalendarCheck, CalendarX, Circle, Send } from "lucide-react";
 import { useState } from "react";
 
+import { NotificationHistory } from "@/components/notification-history";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { errorMessage } from "@/lib/api/client";
+import { useRemind } from "@/lib/api/hooks";
 import type { StudyCard } from "@/lib/api/types";
 import {
   CHANNEL_LABELS,
@@ -18,10 +22,19 @@ import { cn } from "@/lib/utils";
 export function NotifyPanel({ study }: { study: StudyCard }) {
   const requirementLabel = useRequirementLabel();
   const appointmentTarget = useAppointmentTarget();
+  const remind = useRemind(study.id);
   const n = study.notification;
   // Уведомление появилось на глазах (врач только что принял решение) — подсвечиваем панель
   const [sentNow] = useState(!n);
   if (!n) return null;
+  const urgent = study.decision?.chosen_types.includes("urgent_hospitalization");
+  const sms = n.deliveries.find((d) => d.attempt === 0 && d.channel === "sms")?.text;
+  // Как rules.needs_reminder на backend: есть незакрытые направления, пациент не отказался
+  const canRemind =
+    study.can_act &&
+    n.patient_action !== "declined" &&
+    study.requirements.some((r) => !r.appointment_id) &&
+    n.reminders_sent < n.max_reminders;
 
   return (
     <Card className={cn(sentNow && "animate-notify-sent")}>
@@ -45,7 +58,49 @@ export function NotifyPanel({ study }: { study: StudyCard }) {
             <Badge variant="secondary">не прочитано</Badge>
           )}
         </div>
-        <p className="rounded-xl bg-background p-3 whitespace-pre-wrap">{n.text}</p>
+        <div className="grid gap-1">
+          <span className="text-xs font-medium text-muted-foreground">На сайте, в кабинете:</span>
+          <p className="rounded-xl bg-background p-3 whitespace-pre-line">{n.text}</p>
+        </div>
+        <div className="grid gap-1">
+          <span className="text-xs font-medium text-muted-foreground">
+            В email и соцсети — коротко, со ссылкой:
+          </span>
+          <p className="rounded-xl bg-background p-3">{n.short_text}</p>
+        </div>
+        {sms && (
+          <div className="grid gap-1">
+            <span className="text-xs font-medium text-muted-foreground">
+              В SMS — ещё короче, без медицинских данных:
+            </span>
+            <p className="rounded-xl bg-background p-3">{sms}</p>
+          </div>
+        )}
+        <details className="group">
+          <summary className="cursor-pointer list-none font-medium text-primary">
+            История отправок и напоминания
+            {n.reminders_sent > 0 && ` (напоминаний: ${n.reminders_sent})`}
+          </summary>
+          <div className="mt-3">
+            <NotificationHistory notification={n} staff />
+          </div>
+        </details>
+        {canRemind && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              variant="outline"
+              disabled={remind.isPending}
+              onClick={() => remind.mutate(n.id)}
+            >
+              <Send /> Напомнить сейчас
+            </Button>
+            <span className="text-muted-foreground">
+              {remind.isError
+                ? errorMessage(remind.error)
+                : `Напоминание ${n.reminders_sent + 1} из ${n.max_reminders} — во все каналы`}
+            </span>
+          </div>
+        )}
 
         {study.requirements.length > 0 && (
           <div className="grid gap-1.5">
@@ -104,7 +159,9 @@ export function NotifyPanel({ study }: { study: StudyCard }) {
         )}
         {study.requirements.length === 0 && !n.patient_action ? (
           <div className="text-muted-foreground">
-            Патологии не выявлено — записываться не нужно, кейс закрыт
+            {urgent
+              ? "Экстренная госпитализация — запись не нужна, кейс закрыт"
+              : "Патологии не выявлено — записываться не нужно, кейс закрыт"}
           </div>
         ) : (
           !n.patient_action && <div className="text-muted-foreground">Пациент ещё не ответил</div>
