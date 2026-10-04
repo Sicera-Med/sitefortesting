@@ -6,6 +6,7 @@ RECOMMENDATION_TYPES: dict[str, str] = {
     RecommendationType.REPEAT_APPOINTMENT: "Повторный приём",
     RecommendationType.SPECIALIST_CONSULT: "Консультация специалиста",
     RecommendationType.ADDITIONAL_RESEARCH: "Дополнительное исследование",
+    RecommendationType.NO_PATHOLOGY: "Патологии не выявлено",
 }
 
 STUDY_TYPES: dict[str, str] = {

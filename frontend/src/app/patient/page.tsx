@@ -150,10 +150,12 @@ function NotificationCard({ item }: { item: PatientNotification }) {
   const canBook = n.patient_action !== "declined";
   const progress = item.booking;
   const done = !!progress && progress.booked === progress.required;
+  // «Патологии не выявлено»: направлений нет — записываться не нужно
+  const nothingToBook = item.requirements.length === 0;
   const cancelled = item.appointments.filter((a) => a.status === "cancelled");
 
   return (
-    <Card className={cn(canBook && !done && "ring-2 ring-primary/30")}>
+    <Card className={cn(canBook && !done && !nothingToBook && "ring-2 ring-primary/30")}>
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
@@ -189,7 +191,13 @@ function NotificationCard({ item }: { item: PatientNotification }) {
           <span className="font-medium text-foreground">{channelsText(n.channels)}:</span> {n.text}
         </p>
 
-        <div className="grid gap-2">
+        {nothingToBook && (
+          <div className="flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-emerald-900">
+            <CircleCheck className="size-4 shrink-0" />
+            Патологии не выявлено — записываться на приём не нужно.
+          </div>
+        )}
+        <div className={cn("grid gap-2", nothingToBook && "hidden")}>
           <h3 className="font-medium">
             {canBook && !done ? "Запишитесь по каждому направлению" : "Направления врача"}
           </h3>
@@ -267,7 +275,7 @@ function NotificationCard({ item }: { item: PatientNotification }) {
           </div>
         ))}
 
-        {open && (
+        {open && !nothingToBook && (
           <div className="flex justify-end">
             <DeclineButton pending={decline.isPending} onConfirm={() => decline.mutate(n.id)} />
           </div>

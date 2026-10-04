@@ -13,6 +13,17 @@ from app.domain.enums import AISource
 ANALYZE_PATH = "/ai/v1/analyze"
 
 
+def _error_text(response: httpx.Response) -> str:
+    """Понятная причина сбоя: detail от ai_service (FastAPI) или начало тела ответа."""
+    try:
+        detail = response.json().get("detail")
+    except (ValueError, AttributeError):
+        detail = None
+    if isinstance(detail, str) and detail:
+        return detail
+    return f"AI service returned HTTP {response.status_code}: {response.text[:300]}"
+
+
 class HttpAIProvider:
     source = AISource.HTTP
 
@@ -31,9 +42,7 @@ class HttpAIProvider:
             raise AIProviderError(f"AI service unavailable: {exc.__class__.__name__}") from exc
 
         if response.is_error:
-            raise AIProviderError(
-                f"AI service returned HTTP {response.status_code}: {response.text[:300]}"
-            )
+            raise AIProviderError(_error_text(response))
         try:
             return response.json()
         except ValueError as exc:

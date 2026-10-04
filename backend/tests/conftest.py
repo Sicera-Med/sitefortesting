@@ -15,6 +15,8 @@ def _test_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     # Детерминированные ответы AI (фикстуры) — только в тестах; воркер запускаем вручную
     monkeypatch.setenv("AI_PROVIDER", "mock")
     monkeypatch.setenv("AI_AUTO_ANALYZE", "false")
+    # Ограничение частоты ручной отправки проверяется отдельным тестом
+    monkeypatch.setenv("AI_SEND_COOLDOWN_S", "0")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

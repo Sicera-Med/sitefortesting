@@ -89,14 +89,31 @@ function useInvalidateStudy(id: string) {
   };
 }
 
-export function useUploadAIResult(id: string) {
+/** Одно исследование — в AI не чаще раза в 10 с (как AI_SEND_COOLDOWN_S на backend). */
+export const AI_SEND_COOLDOWN_MS = 10_000;
+// Время последней отправки по исследованию — на всю вкладку, переживает повторное открытие карточки
+const aiLastSend = new Map<string, number>();
+
+/** Сколько ещё ждать до следующей отправки, мс (0 — можно). */
+export function aiSendWait(id: string, now: number): number {
+  const last = aiLastSend.get(id);
+  return last == null ? 0 : Math.max(0, last + AI_SEND_COOLDOWN_MS - now);
+}
+
+/** Отправка в AI (автоматически при открытии карточки или кнопкой). */
+export function useRetryAI(id: string) {
   const invalidate = useInvalidateStudy(id);
   return useMutation({
-    mutationFn: (payload: unknown) =>
-      api<Inference>(`/studies/${id}/ai-result`, {
-        method: "POST",
-        body: payload,
-      }),
+    mutationFn: () => {
+      // Двойной клик или повторное открытие карточки — второй запрос даже не уходит на backend
+      const wait = aiSendWait(id, Date.now());
+      if (wait > 0) {
+        throw new Error(`Повторно отправить можно через ${Math.ceil(wait / 1000)} с`);
+      }
+      aiLastSend.set(id, Date.now());
+      return api<Inference>(`/studies/${id}/analyze`, { method: "POST" });
+    },
+    // и при сбое: в карточке и таймлайне — новая ошибка
     onSettled: invalidate,
   });
 }

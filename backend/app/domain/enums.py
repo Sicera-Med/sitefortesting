@@ -34,6 +34,7 @@ class RecommendationType(StrEnum):
     REPEAT_APPOINTMENT = "repeat_appointment"
     SPECIALIST_CONSULT = "specialist_consult"
     ADDITIONAL_RESEARCH = "additional_research"
+    NO_PATHOLOGY = "no_pathology"  # патологии не выявлено — действий не требуется
 
 
 class AISource(StrEnum):

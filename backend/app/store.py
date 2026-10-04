@@ -32,6 +32,8 @@ class Store:
         self.notifications: dict[str, Notification] = {}
         self.appointments: dict[str, Appointment] = {}
         self.audit: list[AuditEvent] = []  # append-only
+        self.ai_in_flight: set[str] = set()  # Study, по которым запрос в AI уже идёт
+        self.ai_last_sent: dict[str, datetime] = {}  # когда Study последний раз ушло в AI
 
     # --- Users ---
 

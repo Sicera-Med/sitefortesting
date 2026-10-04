@@ -40,6 +40,15 @@ function sameSet(a: string[], b: string[]) {
   return a.length === b.length && a.every((x) => b.includes(x));
 }
 
+/** «Патологии не выявлено» — только отдельно: выбор снимает остальные и наоборот. */
+function pick(cur: RecommendationType[], t: RecommendationType): RecommendationType[] {
+  if (t === "no_pathology") return cur.includes(t) ? [] : [t];
+  return toggle(
+    cur.filter((x) => x !== "no_pathology"),
+    t,
+  );
+}
+
 function toggle<T>(list: T[], item: T): T[] {
   return list.includes(item) ? list.filter((x) => x !== item) : [...list, item];
 }
@@ -56,7 +65,13 @@ function DecisionForm({ study }: { study: StudyCard }) {
   const [research, setResearch] = useState<string[]>(aiResearch);
   const [comment, setComment] = useState("");
 
-  const score = (t: RecommendationType) => ai?.ranked_options.find((o) => o.type === t)?.score;
+  // Оценка варианта: процент, а если модель дала только порядок — место в нём
+  const note = (t: RecommendationType) => {
+    const i = ai?.ranked_options.findIndex((o) => o.type === t) ?? -1;
+    if (!ai || i < 0) return undefined;
+    const score = ai.ranked_options[i].score;
+    return score != null ? pct(score) : `${i + 1}-й`;
+  };
   const has = (t: RecommendationType) => types.includes(t);
 
   const details: DecisionDetails = {};
@@ -101,15 +116,21 @@ function DecisionForm({ study }: { study: StudyCard }) {
               <CheckRow
                 key={t}
                 checked={has(t)}
-                onChange={() => setTypes((cur) => toggle(cur, t))}
+                onChange={() => setTypes((cur) => pick(cur, t))}
                 label={RECOMMENDATION_LABELS[t]}
                 ai={ai?.recommendation === t}
-                note={score(t) != null ? pct(score(t)) : undefined}
+                note={note(t)}
                 className="p-3"
               />
             ))}
           </div>
 
+          {has("no_pathology") && (
+            <p className="text-sm text-muted-foreground">
+              Пациент получит уведомление, что патологии не выявлено и записываться не нужно — кейс
+              закроется сразу.
+            </p>
+          )}
           {has("repeat_appointment") && (
             <p className="text-sm text-muted-foreground">
               Повторный приём: пациент сам выберет удобное время для записи к вам.
@@ -149,7 +170,7 @@ function DecisionForm({ study }: { study: StudyCard }) {
             <div className="grid gap-0.5 text-sm">
               {agrees == null ? (
                 <span className="text-muted-foreground">
-                  {study.status === "new"
+                  {study.status === "new" && study.ai_auto
                     ? "AI ещё анализирует — можно решить и без него"
                     : "Решение без рекомендации AI"}
                 </span>
@@ -305,7 +326,8 @@ function DecisionSummary({ decision }: { decision: Decision }) {
         {decision.ai_recommendation && (
           <div className="text-muted-foreground">
             AI рекомендовал: {RECOMMENDATION_LABELS[decision.ai_recommendation]}
-            {aiText && ` — ${aiText}`} ({pct(decision.ai_confidence)})
+            {aiText && ` — ${aiText}`}
+            {decision.ai_confidence != null && ` (${pct(decision.ai_confidence)})`}
           </div>
         )}
         {decision.comment && (

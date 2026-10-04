@@ -80,9 +80,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         StudyService(
             app.state.store,
             AIService(app.state.ai, app.state.store, timeout_s=settings.AI_TIMEOUT_S),
+            auto_analyze=settings.AI_AUTO_ANALYZE,
+            send_cooldown_s=settings.AI_SEND_COOLDOWN_S,
         ),
         poll_s=settings.AI_POLL_S,
         retry_s=settings.AI_RETRY_S,
+        max_attempts=settings.AI_MAX_AUTO_ATTEMPTS,
     )
     task = (
         asyncio.create_task(app.state.analyzer.run_forever()) if settings.AI_AUTO_ANALYZE else None

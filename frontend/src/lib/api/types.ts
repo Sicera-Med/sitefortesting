@@ -5,7 +5,7 @@ export type Sex = "m" | "f";
 export type StudyType = "xray" | "ct" | "mri" | "ultrasound" | "mammography";
 export type StudyStatus = "new" | "ai_ready" | "ai_failed" | "decided" | "notified" | "completed";
 export type RecommendationType =
-  "repeat_appointment" | "specialist_consult" | "additional_research";
+  "repeat_appointment" | "specialist_consult" | "additional_research" | "no_pathology"; // патологии не выявлено — только отдельно, записываться не нужно
 export type AISource = "mock" | "http" | "manual";
 export type NotificationChannel = "sms" | "email" | "social";
 export type NotificationStatus = "sent" | "read";
@@ -74,13 +74,13 @@ export interface Dictionaries {
 
 export interface RankedOption {
   type: RecommendationType;
-  score: number;
+  score: number | null; // null — модель дала только порядок вариантов
 }
 
 export interface Reason {
   code: string;
   label: string;
-  weight: number;
+  weight: number | null; // null — порядок причин = важность
 }
 
 /** Детали, которые предлагает AI или выбирает врач (SPEC §5.5, §6.2). */
@@ -96,7 +96,7 @@ export interface Inference {
   model_name: string;
   model_version: string;
   recommendation: RecommendationType;
-  confidence: number;
+  confidence: number | null; // модель коллег уверенность не сообщает
   ranked_options: RankedOption[];
   reasons: Reason[];
   details: RecommendationDetails;
@@ -156,9 +156,10 @@ export interface StudyListItem {
   performed_at: string;
   patient: PatientBrief;
   doctor: DoctorBrief;
-  ai: { recommendation: RecommendationType; confidence: number } | null;
+  ai: { recommendation: RecommendationType; confidence: number | null } | null;
   decision: { chosen_types: RecommendationType[]; accepted_ai: boolean | null } | null;
   booking: BookingProgress | null; // сколько направлений пациент закрыл записью
+  ai_auto: boolean; // автоотправка в AI включена; false — врач отправляет кнопкой
   can_act: boolean;
 }
 
@@ -188,6 +189,13 @@ export interface BookingProgress {
   required: number;
 }
 
+/** Автоповтор после сбоя AI: раз в AI_RETRY_S (8 ч), не больше AI_MAX_AUTO_ATTEMPTS (3). */
+export interface AIRetry {
+  failures: number; // неудачных автоматических попыток подряд
+  next_at: string | null; // следующая автоматическая попытка
+  stopped: boolean; // автоповтор остановлен — только ручная отправка
+}
+
 export interface StudyCard {
   id: string;
   status: StudyStatus;
@@ -203,6 +211,9 @@ export interface StudyCard {
   notification: Notification | null;
   appointments: CardAppointment[]; // записи пациента по уведомлению
   requirements: Requirement[];
+  ai_retry: AIRetry | null; // есть, пока AI не ответил после сбоя
+  ai_auto: boolean; // автоотправка в AI включена; false — врач отправляет кнопкой
+  ai_send_after: string | null; // раньше этого времени повторно отправить в AI нельзя
   can_act: boolean;
 }
 

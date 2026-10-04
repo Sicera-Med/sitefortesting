@@ -102,7 +102,13 @@ export function NotifyPanel({ study }: { study: StudyCard }) {
             <CalendarX className="size-4 shrink-0" /> Пациент отказался
           </div>
         )}
-        {!n.patient_action && <div className="text-muted-foreground">Пациент ещё не ответил</div>}
+        {study.requirements.length === 0 && !n.patient_action ? (
+          <div className="text-muted-foreground">
+            Патологии не выявлено — записываться не нужно, кейс закрыт
+          </div>
+        ) : (
+          !n.patient_action && <div className="text-muted-foreground">Пациент ещё не ответил</div>
+        )}
       </CardContent>
     </Card>
   );

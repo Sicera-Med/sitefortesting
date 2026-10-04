@@ -82,6 +82,9 @@ class NotificationService:
             notification_id=notification.id,
             channels=[str(c) for c in channels],
         )
+        # Записываться некуда (патологии не выявлено) — кейс закрыт уведомлением
+        if not rules.needs_booking(decision):
+            complete_study(self.store, study.id)
         return notification
 
     # --- Пациент ---
@@ -138,6 +141,8 @@ class NotificationService:
         notification = self.own_notification(user, notification_id)
         if not rules.can_respond_to_notification(notification):
             raise ConflictError("Вы уже ответили на это уведомление")
+        if not rules.needs_booking(self.store.get_decision(notification.decision_id)):
+            raise ConflictError("Записываться по этому уведомлению не нужно")
         now = utcnow()
         notification.patient_action = PatientActionType.DECLINED
         notification.action_at = now

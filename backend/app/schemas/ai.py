@@ -21,7 +21,7 @@ class AIResultOut(BaseModel):
     model_name: str
     model_version: str
     recommendation: str
-    confidence: float
+    confidence: float | None
     ranked_options: list[RankedOptionOut]
     reasons: list[ReasonOut]
     details: dict[str, Any]

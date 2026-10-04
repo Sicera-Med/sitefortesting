@@ -1,0 +1,24 @@
+[project]
+name = "triage-ai-service"
+version = "0.1.0"
+description = "HTTP-обёртка над моделью AI-команды (analysis.py) для backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.4",
+    "huggingface-hub>=0.30",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "httpx>=0.28.1",
+    "ruff>=0.16.7",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Код AI-команды копируется как есть — не форматируем и не линтим его
+extend-exclude = ["analysis.py", "bft_templates.py"]

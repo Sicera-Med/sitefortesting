@@ -57,8 +57,10 @@ class MetricsService:
         }
 
     def _by_confidence(self, with_ai: list[Decision]) -> dict[str, Any]:
-        high = [d for d in with_ai if d.ai_confidence >= self.threshold]
-        low = [d for d in with_ai if d.ai_confidence < self.threshold]
+        # Только решения, где модель сообщила уверенность (модель коллег её не даёт)
+        scored = [d for d in with_ai if d.ai_confidence is not None]
+        high = [d for d in scored if d.ai_confidence >= self.threshold]
+        low = [d for d in scored if d.ai_confidence < self.threshold]
         return {
             "threshold": self.threshold,
             "high": _rate(sum(d.accepted_ai for d in high), len(high)),
@@ -118,7 +120,8 @@ class MetricsService:
     def _notifications(self) -> list[dict[str, Any]]:
         """Конверсия уведомлений по типу рекомендации врача."""
         rows = []
-        for kind in RecommendationType:
+        # Только направления, по которым пациент записывается
+        for kind in (t for t in RecommendationType if t is not RecommendationType.NO_PATHOLOGY):
             sent = [
                 n
                 for n in self.store.list_notifications()

@@ -15,10 +15,15 @@ def _codes(details: dict[str, Any], key: str, legacy: str) -> Any:
 
 
 def normalize_chosen(raw: Any) -> tuple[RecommendationType, ...]:
-    """Выбранные врачом варианты: 1–3, без повторов, в порядке справочника."""
+    """Выбранные врачом варианты без повторов, в порядке справочника.
+
+    Направлений — от одного до трёх; «патологии не выявлено» — только отдельно.
+    """
     if not isinstance(raw, list | tuple) or not raw:
         raise ValueError("chosen_types must be a non-empty list")
     chosen = {RecommendationType(t) for t in raw}
+    if RecommendationType.NO_PATHOLOGY in chosen and len(chosen) > 1:
+        raise ValueError("no_pathology cannot be combined with other options")
     return tuple(t for t in RecommendationType if t in chosen)
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from app.ai.contract import AIRequest, AIResult
@@ -12,6 +14,7 @@ from app.core.errors import (
     InvalidInputError,
     InvalidTransitionError,
     NotFoundError,
+    TooManyRequestsError,
 )
 from app.core.ids import new_id
 from app.domain import rules
@@ -48,12 +51,23 @@ class StudyView:
     appointments: list[tuple[Appointment, User | None]]  # записи пациента по уведомлению
     can_act: bool
     requirements: list[RequirementView] = field(default_factory=list)
+    ai_auto: bool = True  # исследование уйдёт в AI само; False — только ручная отправка
+    ai_send_after: datetime | None = None  # раньше этого времени повторно отправить нельзя
 
 
 class StudyService:
-    def __init__(self, store: Store, ai: AIService) -> None:
+    def __init__(
+        self,
+        store: Store,
+        ai: AIService,
+        *,
+        auto_analyze: bool = True,
+        send_cooldown_s: float = 0,
+    ) -> None:
         self.store = store
         self.ai = ai
+        self.auto_analyze = auto_analyze  # False — в AI отправляет только врач
+        self.send_cooldown_s = send_cooldown_s  # ручная отправка не чаще раза в N секунд
 
     # --- Чтение ---
 
@@ -86,7 +100,17 @@ class StudyService:
             appointments=appointments,
             can_act=rules.can_act(user, study),
             requirements=requirements,
+            ai_auto=self.auto_analyze,
+            ai_send_after=self._send_after(study.id),
         )
+
+    def _send_after(self, study_id: str) -> datetime | None:
+        """Когда снова можно отправить в AI (лимит AI_SEND_COOLDOWN_S); None — уже можно."""
+        last = self.store.ai_last_sent.get(study_id)
+        if last is None:
+            return None
+        after = last + timedelta(seconds=self.send_cooldown_s)
+        return after if after > utcnow() else None
 
     def list(
         self, user: User, *, scope: Scope | None = None, statuses: list[StudyStatus] | None = None
@@ -144,6 +168,8 @@ class StudyService:
         # Пока шёл запрос, врач мог уже решить без AI — статус тогда не трогаем
         if study.status in rules.ANALYZABLE_STATUSES:
             study.status = StudyStatus.AI_READY
+        # AI ответил — автоповтор больше не нужен
+        study.ai_auto_failures, study.ai_next_retry_at, study.ai_auto_stopped = 0, None, False
         audit.record(
             self.store,
             actor,
@@ -158,35 +184,70 @@ class StudyService:
         )
         return inference
 
-    async def analyze_auto(self, study_id: str) -> AIInference:
-        """Анализ от имени системы. Бросает AIFailedError, если AI не ответил."""
-        study = self.store.get_study(study_id)
-        if study is None:
-            raise NotFoundError("Исследование не найдено", details={"study_id": study_id})
+    async def _analyze(self, actor: User | None, study: Study, **extra: Any) -> AIInference:
+        """Запрос в AI. Сбой — в аудит (с номером попытки) и AIFailedError наверх."""
         patient = self.store.get_patient(study.patient_id)
         request: AIRequest = self.ai.request_for_study(study, patient)
         try:
             result, latency_ms = await self.ai.run(request)
         except AIFailedError as exc:
-            # В аудит — только начало серии сбоев; повторы раз в AI_RETRY_S не засоряют таймлайн
-            first_failure = study.status is not StudyStatus.AI_FAILED
             if study.status is StudyStatus.NEW:
                 study.status = StudyStatus.AI_FAILED
-            if not first_failure:
-                raise
             audit.record(
                 self.store,
-                None,
+                actor,
                 "ai.failed",
                 target_id=study.id,
                 request_id=request.request_id,
                 error=exc.message,
+                **extra,
                 **exc.details,
             )
             raise
         return self._save_inference(
-            None, study, result, source=self.ai.provider.source, latency_ms=latency_ms
+            actor, study, result, source=self.ai.provider.source, latency_ms=latency_ms
         )
+
+    async def analyze_auto(self, study_id: str, *, attempt: int, of: int) -> AIInference:
+        """Автоматическая попытка (воркер). Бросает AIFailedError, если AI не ответил."""
+        study = self.store.get_study(study_id)
+        if study is None:
+            raise NotFoundError("Исследование не найдено", details={"study_id": study_id})
+        return await self._analyze(None, study, attempt=attempt, of=of)
+
+    async def retry_ai(self, user: User, study_id: str) -> AIInference:
+        """Ручная отправка в AI (лечащий врач или главврач): новое исследование при
+        выключенной автоотправке или повтор после сбоя.
+
+        Автоповтор не трогает: если он остановлен — остаётся остановленным.
+        """
+        study = self._get(user, study_id)
+        if not rules.can_analyze(user, study):
+            raise ForbiddenError("Отправить в AI может лечащий врач или главврач")
+        manual_new = study.status is StudyStatus.NEW and not self.auto_analyze
+        if study.status is not StudyStatus.AI_FAILED and not manual_new:
+            raise InvalidTransitionError(
+                "Отправить в AI можно новое исследование (при ручной отправке) или после сбоя AI",
+                details={"status": str(study.status)},
+            )
+        # Карточка открыта в двух вкладках или кнопку нажали дважды — второй запрос не шлём
+        if study.id in self.store.ai_in_flight:
+            raise ConflictError("Заключение уже отправлено в AI, ждём ответ")
+        now = utcnow()
+        last = self.store.ai_last_sent.get(study.id)
+        if last is not None:
+            wait = self.send_cooldown_s - (now - last).total_seconds()
+            if wait > 0:
+                raise TooManyRequestsError(
+                    f"Повторно отправить можно через {math.ceil(wait)} с",
+                    details={"retry_after_s": math.ceil(wait)},
+                )
+        self.store.ai_last_sent[study.id] = now
+        self.store.ai_in_flight.add(study.id)
+        try:
+            return await self._analyze(user, study, manual=True)
+        finally:
+            self.store.ai_in_flight.discard(study.id)
 
     def upload_ai_result(self, user: User, study_id: str, data: Any) -> AIInference:
         """Запасной путь (§6.5): ответ AI в формате контракта, загруженный вручную."""

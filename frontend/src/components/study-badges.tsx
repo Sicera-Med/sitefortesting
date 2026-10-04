@@ -40,12 +40,12 @@ export function AIBadge({
   confidence,
 }: {
   recommendation: RecommendationType;
-  confidence: number;
+  confidence: number | null;
 }) {
   return (
     <span className="inline-flex items-center gap-2">
       <span className="text-sm">{RECOMMENDATION_LABELS[recommendation]}</span>
-      <ConfidenceBadge value={confidence} />
+      {confidence != null && <ConfidenceBadge value={confidence} />}
     </span>
   );
 }

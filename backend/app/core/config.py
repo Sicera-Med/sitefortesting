@@ -43,12 +43,17 @@ class Settings(BaseSettings):
     # Ответы AI — только от сервиса коллег. mock (фикстуры) разрешён лишь в тестах
     AI_PROVIDER: Literal["mock", "http"] = "http"
     AI_BASE_URL: str = "http://localhost:8001"
-    AI_TIMEOUT_S: int = Field(default=30, gt=0)
+    # Модель коллег (LLM через Hugging Face) отвечает ~30–60 с
+    AI_TIMEOUT_S: int = Field(default=120, gt=0)
     AI_MOCK_LATENCY_MS: int = Field(default=0, ge=0)  # только для тестов
     # Автоанализ: новые исследования уходят в AI сами; при сбое — повтор через AI_RETRY_S
-    AI_AUTO_ANALYZE: bool = True
+    # Пока выключено (решение пользователя): в AI отправляет врач кнопкой
+    AI_AUTO_ANALYZE: bool = False
     AI_POLL_S: float = Field(default=3, gt=0)
-    AI_RETRY_S: float = Field(default=30, gt=0)
+    AI_RETRY_S: float = Field(default=8 * 3600, gt=0)  # повтор после сбоя — через 8 часов
+    AI_MAX_AUTO_ATTEMPTS: int = Field(default=3, ge=1)  # потом — только ручная отправка
+    # Ручная отправка одного исследования — не чаще раза в AI_SEND_COOLDOWN_S (бережём кредиты)
+    AI_SEND_COOLDOWN_S: float = Field(default=10, ge=0)
     AI_HIGH_CONFIDENCE: float = Field(default=0.7, ge=0, le=1)
 
     # --- Клиника ---

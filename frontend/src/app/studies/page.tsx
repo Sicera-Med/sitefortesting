@@ -1,12 +1,14 @@
 "use client";
 
-import { Archive, Loader2, Lock } from "lucide-react";
+import { Archive, ChevronDown, ChevronUp, Loader2, Lock, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { AgreementBadge, AIBadge, StatusBadge } from "@/components/study-badges";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -36,6 +38,18 @@ const ARCHIVE_FILTERS: { value: ArchiveFilter; label: string }[] = [
   { value: "completed", label: STATUS_LABELS.completed },
 ];
 
+const COLUMNS = [
+  "Пациент",
+  "Исследование",
+  "Дата",
+  "Статус",
+  "Рекомендация AI",
+  "Решение врача",
+  "Лечащий врач",
+];
+
+const PAGE = 5; // сколько строк показывать до «Развернуть»
+
 export default function StudiesPage() {
   return (
     <AppShell roles={["doctor", "chief", "manager"]}>
@@ -54,6 +68,14 @@ function StudiesQueue() {
   const { data, isLoading, error } = useStudies(scope, status);
   const label = useLabels();
   const router = useRouter();
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  // Свежие сверху; поиск — по ФИО пациента (любая часть, без учёта регистра)
+  const q = query.trim().toLowerCase();
+  const found = (data ?? [])
+    .filter((s) => !q || s.patient.full_name.toLowerCase().includes(q))
+    .sort((a, b) => b.performed_at.localeCompare(a.performed_at));
+  const shown = expanded ? found : found.slice(0, PAGE);
 
   return (
     <div className="grid gap-4">
@@ -66,7 +88,9 @@ function StudiesQueue() {
                 ? "Мои исследования"
                 : "Все исследования"}
           </h1>
-          <p className="text-sm text-muted-foreground">{data ? `${data.length} шт.` : " "}</p>
+          <p className="text-sm text-muted-foreground">
+            {data ? (q ? `найдено ${found.length} из ${data.length}` : `${data.length} шт.`) : " "}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           {isDoctor && (
@@ -99,17 +123,25 @@ function StudiesQueue() {
         </div>
       </div>
 
+      <div className="relative max-w-sm">
+        <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          type="search"
+          placeholder="Поиск по пациенту"
+          aria-label="Поиск по пациенту"
+          className="h-10 pl-9"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
+
       <div className="overflow-hidden rounded-3xl bg-card px-3 py-2">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Пациент</TableHead>
-              <TableHead>Исследование</TableHead>
-              <TableHead>Дата</TableHead>
-              <TableHead>Статус</TableHead>
-              <TableHead>Рекомендация AI</TableHead>
-              <TableHead>Решение врача</TableHead>
-              {scope === "all" && <TableHead>Лечащий врач</TableHead>}
+              {COLUMNS.filter((c) => c !== "Лечащий врач" || scope === "all").map((c) => (
+                <TableHead key={c}>{c}</TableHead>
+              ))}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -128,16 +160,18 @@ function StudiesQueue() {
                 </TableCell>
               </TableRow>
             )}
-            {data?.length === 0 && (
+            {data && found.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
-                  {view === "work"
-                    ? "Все исследования разобраны — решённые в архиве"
-                    : "Архив пуст"}
+                  {q
+                    ? `Пациентов «${query.trim()}» не найдено`
+                    : view === "work"
+                      ? "Все исследования разобраны — решённые в архиве"
+                      : "Архив пуст"}
                 </TableCell>
               </TableRow>
             )}
-            {data?.map((s) => (
+            {shown.map((s) => (
               <TableRow
                 key={s.id}
                 className={cn(
@@ -166,9 +200,13 @@ function StudiesQueue() {
                   {s.ai ? (
                     <AIBadge recommendation={s.ai.recommendation} confidence={s.ai.confidence} />
                   ) : s.status === "new" ? (
-                    <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                      <Loader2 className="size-3.5 animate-spin" /> анализирует…
-                    </span>
+                    s.ai_auto ? (
+                      <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                        <Loader2 className="size-3.5 animate-spin" /> анализирует…
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">не отправлено</span>
+                    )
                   ) : s.status === "ai_failed" ? (
                     <span className="text-red-700">AI не отвечает</span>
                   ) : (
@@ -210,6 +248,14 @@ function StudiesQueue() {
             ))}
           </TableBody>
         </Table>
+        {found.length > PAGE && (
+          <div className="flex justify-center border-t py-2">
+            <Button variant="ghost" size="sm" onClick={() => setExpanded((v) => !v)}>
+              {expanded ? <ChevronUp /> : <ChevronDown />}
+              {expanded ? "Свернуть" : `Развернуть — ещё ${found.length - PAGE}`}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

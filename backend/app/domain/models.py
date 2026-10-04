@@ -64,19 +64,24 @@ class Study:
     performed_at: datetime
     created_at: datetime
     report_text: str
+    # Автоповтор при сбое AI: неудачных автоматических попыток подряд, когда следующая,
+    # и остановлен ли он (после AI_MAX_AUTO_ATTEMPTS — только ручная отправка)
+    ai_auto_failures: int = 0
+    ai_next_retry_at: datetime | None = None
+    ai_auto_stopped: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class RankedOption:
     type: RecommendationType
-    score: float
+    score: float | None  # None — модель дала только порядок вариантов
 
 
 @dataclass(frozen=True, slots=True)
 class Reason:
     code: str
     label: str
-    weight: float
+    weight: float | None  # None — модель не оценивает вес, порядок = важность
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -88,7 +93,7 @@ class AIInference:
     model_name: str
     model_version: str
     recommendation: RecommendationType
-    confidence: float
+    confidence: float | None  # None — модель не сообщает уверенность
     ranked_options: tuple[RankedOption, ...]
     reasons: tuple[Reason, ...]
     latency_ms: int

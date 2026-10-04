@@ -134,6 +134,11 @@ def can_respond_to_notification(notification: Notification) -> bool:
     return notification.patient_action is None
 
 
+def needs_booking(decision: Decision) -> bool:
+    """Есть ли куда записываться. «Патологии не выявлено» — кейс закрыт сразу."""
+    return bool(required_bookings(decision))
+
+
 # --- Направления, на которые пациент должен записаться ---
 
 RequirementKind = Literal["treating", "specialist", "research"]

@@ -24,13 +24,13 @@ from app.services.studies import StudyView
 
 class RankedOptionOut(BaseModel):
     type: RecommendationType
-    score: float
+    score: float | None
 
 
 class ReasonOut(BaseModel):
     code: str
     label: str
-    weight: float
+    weight: float | None
 
 
 class InferenceOut(BaseModel):
@@ -40,7 +40,7 @@ class InferenceOut(BaseModel):
     model_name: str
     model_version: str
     recommendation: RecommendationType
-    confidence: float
+    confidence: float | None
     ranked_options: list[RankedOptionOut]
     reasons: list[ReasonOut]
     details: dict[str, Any]
@@ -67,7 +67,7 @@ class InferenceOut(BaseModel):
 
 class InferenceBrief(BaseModel):
     recommendation: RecommendationType
-    confidence: float
+    confidence: float | None
 
 
 # --- Решение ---
@@ -196,6 +196,7 @@ class StudyListItem(BaseModel):
     ai: InferenceBrief | None
     decision: DecisionBrief | None
     booking: BookingProgress | None  # сколько направлений пациент уже закрыл записью
+    ai_auto: bool  # автоотправка в AI включена; False — врач отправляет кнопкой
     can_act: bool
 
     @classmethod
@@ -220,8 +221,17 @@ class StudyListItem(BaseModel):
             if v.decision
             else None,
             booking=BookingProgress.build(v.requirements),
+            ai_auto=v.ai_auto,
             can_act=v.can_act,
         )
+
+
+class AIRetryOut(BaseModel):
+    """Автоповтор после сбоя AI."""
+
+    failures: int  # неудачных автоматических попыток подряд
+    next_at: datetime | None  # следующая автоматическая попытка
+    stopped: bool  # автоповтор остановлен — только ручная отправка
 
 
 class StudyCard(BaseModel):
@@ -239,6 +249,9 @@ class StudyCard(BaseModel):
     notification: NotificationOut | None
     appointments: list[CardAppointmentOut]
     requirements: list[RequirementOut]
+    ai_retry: AIRetryOut | None  # есть, пока AI не ответил после сбоя
+    ai_auto: bool  # автоотправка в AI включена; False — врач отправляет кнопкой
+    ai_send_after: datetime | None  # раньше — повторно отправить нельзя (лимит частоты)
     can_act: bool
 
     @classmethod
@@ -259,6 +272,15 @@ class StudyCard(BaseModel):
             notification=NotificationOut.build(v.notification) if v.notification else None,
             appointments=[CardAppointmentOut.build(a, doctor) for a, doctor in v.appointments],
             requirements=[RequirementOut.build(r) for r in v.requirements],
+            ai_retry=AIRetryOut(
+                failures=s.ai_auto_failures,
+                next_at=s.ai_next_retry_at,
+                stopped=s.ai_auto_stopped,
+            )
+            if s.status is StudyStatus.AI_FAILED
+            else None,
+            ai_auto=v.ai_auto,
+            ai_send_after=v.ai_send_after,
             can_act=v.can_act,
         )
 

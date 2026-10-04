@@ -16,7 +16,7 @@ import type {
 } from "./api/types";
 
 export const STATUS_LABELS: Record<StudyStatus, string> = {
-  new: "AI анализирует",
+  new: "Новое",
   ai_ready: "AI готов",
   ai_failed: "AI не отвечает",
   decided: "Решение принято",
@@ -28,6 +28,7 @@ export const RECOMMENDATION_LABELS: Record<RecommendationType, string> = {
   repeat_appointment: "Повторный приём",
   specialist_consult: "Консультация специалиста",
   additional_research: "Дополнительное исследование",
+  no_pathology: "Патологии не выявлено",
 };
 
 export const RECOMMENDATION_TYPES = Object.keys(RECOMMENDATION_LABELS) as RecommendationType[];

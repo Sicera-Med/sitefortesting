@@ -1,10 +1,15 @@
-"""AI-контракт v1 (SPEC §6) — формат обмена с AI-сервисом коллег.
+"""AI-контракт v1.3 (SPEC §6) — формат обмена с AI-сервисом коллег.
 
 ВНИМАНИЕ: менять формат только по согласованию с AI-командой.
 
+Модель коллег (ai_service/analysis.py) отвечает:
+  recommendation, options_order, specialists, research_types, reasons[{code, label}]
+— без уверенности и весов. Старый формат v1 (confidence, ranked_options со score,
+details, weight у причин) тоже принимается.
+
 Валидация двухуровневая (§6.3):
-- строго — recommendation, confidence, reasons; нарушение → AIContractError;
-- мягко — ranked_options, request_id, model, details: чиним сами и пишем warning.
+- строго — recommendation и непустые reasons с label; нарушение → AIContractError;
+- мягко — confidence, порядок вариантов, детали, request_id, model: чиним сами и пишем warning.
 """
 
 from __future__ import annotations
@@ -45,13 +50,13 @@ class _ModelInfo(BaseModel):
 
 class _Option(BaseModel):
     type: str
-    score: float
+    score: float | None = None
 
 
 class _Reason(BaseModel):
     code: str = ""
     label: str = Field(min_length=1)
-    weight: float = Field(ge=0, le=1)
+    weight: float | None = Field(default=None, ge=0, le=1)
 
 
 class _RawResponse(BaseModel):
@@ -60,10 +65,16 @@ class _RawResponse(BaseModel):
     request_id: str | None = None
     model: _ModelInfo | None = None
     recommendation: RecommendationType
-    confidence: float = Field(ge=0, le=1)
-    ranked_options: list[_Option] = Field(default_factory=list)
+    confidence: float | None = Field(default=None, ge=0, le=1)  # модель коллег не даёт
+    ranked_options: list[_Option] = Field(default_factory=list)  # v1: варианты со score
+    options_order: list[str] = Field(default_factory=list)  # коллеги: порядок без оценок
     reasons: list[_Reason] = Field(min_length=1)
-    details: Any = None  # необязательно: {"specialist"} или {"research_types": [...]}
+    # Детали: v1 — объект details; коллеги — specialists/research_types на верхнем уровне
+    details: Any = None
+    specialists: Any = None
+    research_types: Any = None
+    # Замечания проверки на стороне AI-сервиса (их validate()) — попадают в наши warnings
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AIContractError(ValueError):
@@ -76,7 +87,7 @@ class AIResult:
     model_name: str
     model_version: str
     recommendation: RecommendationType
-    confidence: float
+    confidence: float | None
     ranked_options: tuple[RankedOption, ...]
     reasons: tuple[Reason, ...]
     warnings: tuple[str, ...] = field(default_factory=tuple)
@@ -89,6 +100,7 @@ class AIResult:
             "model": {"name": self.model_name, "version": self.model_version},
             "recommendation": str(self.recommendation),
             "confidence": self.confidence,
+            "options_order": [str(o.type) for o in self.ranked_options],
             "ranked_options": [
                 {"type": str(o.type), "score": o.score} for o in self.ranked_options
             ],
@@ -107,22 +119,44 @@ def _format_errors(exc: ValidationError) -> str:
     return "; ".join(parts)
 
 
-def _normalize_options(
+def _known_types(raw: list[str], field_name: str, warnings: list[str]) -> list[RecommendationType]:
+    """Коды вариантов по порядку: неизвестные и повторы отбрасываем."""
+    result: list[RecommendationType] = []
+    for code in raw:
+        try:
+            kind = RecommendationType(code)
+        except ValueError:
+            warnings.append(f"{field_name}: unknown type {code!r} ignored")
+            continue
+        if kind in result:
+            warnings.append(f"{field_name}: duplicate {kind} ignored")
+            continue
+        result.append(kind)
+    return result
+
+
+def _order_options(
+    order: list[RecommendationType], recommendation: RecommendationType, warnings: list[str]
+) -> tuple[RankedOption, ...]:
+    """Порядок без оценок (формат коллег): рекомендация первой, недостающие — в конец."""
+    if order and order[0] is not recommendation:
+        warnings.append("options_order: recommendation is not first, moved")
+    ordered = [recommendation] + [t for t in order if t is not recommendation]
+    missing = [t for t in RecommendationType if t not in ordered]
+    if order and missing:
+        warnings.append(f"options_order: missing {', '.join(missing)}, appended")
+    return tuple(RankedOption(t, None) for t in ordered + missing)
+
+
+def _scored_options(
     raw: list[_Option], recommendation: RecommendationType, confidence: float, warnings: list[str]
 ) -> tuple[RankedOption, ...]:
+    """v1: варианты со score — чиним сумму, порядок и score рекомендации."""
     scores: dict[RecommendationType, float] = {}
-    given: dict[RecommendationType, None] = {}  # упорядоченное множество
+    given = _known_types([o.type for o in raw], "ranked_options", warnings)
     for opt in raw:
-        try:
-            kind = RecommendationType(opt.type)
-        except ValueError:
-            warnings.append(f"ranked_options: unknown type {opt.type!r} ignored")
-            continue
-        if kind in scores:
-            warnings.append(f"ranked_options: duplicate {kind} ignored")
-            continue
-        scores[kind] = min(max(opt.score, 0.0), 1.0)
-        given[kind] = None
+        if opt.type in given and opt.type not in scores and opt.score is not None:
+            scores[RecommendationType(opt.type)] = min(max(opt.score, 0.0), 1.0)
 
     if scores.get(recommendation) != confidence:
         if recommendation in scores:
@@ -137,12 +171,27 @@ def _normalize_options(
             scores[t] = round(rest / len(missing), 4)
 
     ordered = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
-    given_order = list(given)  # порядок, в котором прислала модель
-    if given_order != [t for t, _ in ordered if t in given]:
+    if given != [t for t, _ in ordered if t in given]:
         warnings.append("ranked_options: reordered by score")
     if ordered[0][0] is not recommendation:
         warnings.append("ranked_options: recommendation is not the top-scored option")
     return tuple(RankedOption(t, s) for t, s in ordered)
+
+
+def _raw_details(raw: _RawResponse, warnings: list[str]) -> Any:
+    """Детали из объекта details (v1) или из полей верхнего уровня (формат коллег)."""
+    if raw.specialists is None and raw.research_types is None:
+        return raw.details
+    if raw.details is not None:
+        warnings.append(
+            "details and top-level specialists/research_types both given, top-level used"
+        )
+    merged: dict[str, Any] = {}
+    if raw.specialists is not None:
+        merged["specialists"] = raw.specialists
+    if raw.research_types is not None:
+        merged["research_types"] = raw.research_types
+    return merged
 
 
 def parse_ai_response(data: Any, *, expected_request_id: str) -> AIResult:
@@ -154,7 +203,7 @@ def parse_ai_response(data: Any, *, expected_request_id: str) -> AIResult:
     except ValidationError as exc:
         raise AIContractError(_format_errors(exc)) from exc
 
-    warnings: list[str] = []
+    warnings: list[str] = [f"ai_service: {w}" for w in raw.warnings]
     if raw.request_id != expected_request_id:
         warnings.append("request_id missing or mismatched, replaced")
     model = raw.model or _ModelInfo()
@@ -164,16 +213,30 @@ def parse_ai_response(data: Any, *, expected_request_id: str) -> AIResult:
     reasons = tuple(
         Reason(r.code or f"reason_{i + 1}", r.label, r.weight) for i, r in enumerate(raw.reasons)
     )
-    details = normalize_ai_details(raw.recommendation, raw.details, warnings)
+    details = normalize_ai_details(raw.recommendation, _raw_details(raw, warnings), warnings)
+    key = {
+        RecommendationType.SPECIALIST_CONSULT: "specialists",
+        RecommendationType.ADDITIONAL_RESEARCH: "research_types",
+    }.get(raw.recommendation)
+    if key and not details.get(key):
+        warnings.append(f"{raw.recommendation} without {key}")
+
+    # Уверенность есть — v1 со score; нет — только порядок вариантов
+    if raw.confidence is not None:
+        options = _scored_options(raw.ranked_options, raw.recommendation, raw.confidence, warnings)
+    else:
+        order = raw.options_order or [o.type for o in raw.ranked_options]
+        options = _order_options(
+            _known_types(order, "options_order", warnings), raw.recommendation, warnings
+        )
+
     return AIResult(
         request_id=expected_request_id,
         model_name=model.name,
         model_version=model.version,
         recommendation=raw.recommendation,
         confidence=raw.confidence,
-        ranked_options=_normalize_options(
-            raw.ranked_options, raw.recommendation, raw.confidence, warnings
-        ),
+        ranked_options=options,
         reasons=reasons,
         warnings=tuple(warnings),
         details=details,

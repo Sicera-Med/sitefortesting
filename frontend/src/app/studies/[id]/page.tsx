@@ -49,9 +49,6 @@ function StudyView() {
       </Alert>
     );
 
-  // Анализ идёт сам; вручную можно лишь загрузить ответ AI (запасной путь §6.5), пока нет решения
-  const canUpload = study.can_act && ANALYZABLE.includes(study.status);
-
   return (
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -88,19 +85,22 @@ function StudyView() {
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[1fr_1fr]">
-        <Card className="lg:sticky lg:top-20">
-          <CardHeader>
-            <CardTitle>Заключение</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="max-h-[70vh] overflow-y-auto text-sm leading-relaxed whitespace-pre-wrap">
-              {study.report_text}
-            </div>
-          </CardContent>
-        </Card>
+        {/* Слева — рекомендация AI и заключение, справа — что делает врач */}
+        <div className="grid gap-4">
+          <AIPanel study={study} />
+          <Card>
+            <CardHeader>
+              <CardTitle>Заключение</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="max-h-[50vh] overflow-y-auto text-sm leading-relaxed whitespace-pre-wrap">
+                {study.report_text}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         <div className="grid gap-4">
-          <AIPanel study={study} canUpload={canUpload} />
           <DecisionPanel study={study} />
           <NotifyPanel study={study} />
           <Timeline studyId={study.id} />

@@ -73,7 +73,7 @@ def test_card(client, petrov):
     item = _study(client, petrov, status="ai_ready")
     card = client.get(f"{API}/studies/{item['id']}", headers=petrov).json()
     assert card["report_text"]
-    assert card["ai"]["reasons"] and len(card["ai"]["ranked_options"]) == 3
+    assert card["ai"]["reasons"] and len(card["ai"]["ranked_options"]) == 4
     assert card["patient"]["age"] > 0
 
 
@@ -222,37 +222,90 @@ def test_chief_decides_for_any_patient(client, chief, manager):
     assert any(row["full_name"].startswith("Смирнова") for row in d["by_doctor"])
 
 
-def test_manual_analyze_endpoint_removed(client, petrov):
-    study = _study(client, petrov, status="new")
-    assert client.post(f"{API}/studies/{study['id']}/analyze", headers=petrov).status_code in (
-        404,
-        405,
-    )
+def _failing_study(client, headers):
+    """Исследование, на котором mock-провайдер имитирует сбой AI ([[ai_fail]])."""
+    store = client.app.state.store
+    sid = _study(client, headers, status="new")["id"]
+    study = store.get_study(sid)
+    study.report_text += " [[ai_fail]]"
+    return sid, study
+
+
+def _make_due(study):
+    """Сдвигаем время следующей попытки в прошлое — вместо ожидания 8 часов."""
+    from datetime import timedelta
+
+    study.ai_next_retry_at -= timedelta(hours=9)
 
 
 def test_ai_failure_then_automatic_retry(client, petrov):
-    # Маркер сбоя mock-провайдера: AI «не отвечает»
-    store = client.app.state.store
-    sid = _study(client, petrov, status="new")["id"]
-    study = store.get_study(sid)
-    study.report_text += " [[ai_fail]]"
+    sid, study = _failing_study(client, petrov)
     analyze_all(client)
     card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
     assert card["status"] == "ai_failed" and card["ai"] is None
+    retry = card["ai_retry"]
+    assert retry["failures"] == 1 and not retry["stopped"]
+    assert retry["next_at"] > card["created_at"]  # следующая попытка — через AI_RETRY_S (8 ч)
     events = client.get(f"{API}/studies/{sid}/audit", headers=petrov).json()
     assert events[-1]["action"] == "ai.failed"
+    assert events[-1]["payload"]["attempt"] == 1 and events[-1]["payload"]["of"] == 3
 
-    # Повторные неудачи не засоряют таймлайн: одно событие на серию сбоев
-    analyzer = client.app.state.analyzer
-    analyzer.retry_s = 0
-    analyze_all(client)
-    events = client.get(f"{API}/studies/{sid}/audit", headers=petrov).json()
-    assert [e["action"] for e in events].count("ai.failed") == 1
+    # До срока повтора воркер исследование не трогает
+    assert sid not in client.app.state.analyzer._due()
 
-    # Сервис «поднялся» — следующий проход после паузы повторит анализ сам
+    # Сервис «поднялся» — в срок воркер повторит анализ сам
     study.report_text = study.report_text.replace(" [[ai_fail]]", "")
+    _make_due(study)
     analyze_all(client)
-    assert client.get(f"{API}/studies/{sid}", headers=petrov).json()["status"] == "ai_ready"
+    card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
+    assert card["status"] == "ai_ready" and card["ai_retry"] is None
+    assert study.ai_auto_failures == 0
+
+
+def test_auto_retry_stops_after_three_failures(client, petrov):
+    sid, study = _failing_study(client, petrov)
+    analyze_all(client)
+    for _ in range(2):
+        _make_due(study)
+        analyze_all(client)
+    card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
+    assert card["ai_retry"] == {"failures": 3, "next_at": None, "stopped": True}
+    actions = [e["action"] for e in client.get(f"{API}/studies/{sid}/audit", headers=petrov).json()]
+    assert actions.count("ai.failed") == 3 and actions[-1] == "ai.auto_stopped"
+    # Из автоочереди удалено
+    assert sid not in client.app.state.analyzer._due()
+
+
+def test_manual_send_of_new_study(client, petrov):
+    """Автоотправка выключена (по умолчанию): новое исследование врач отправляет сам."""
+    item = _study(client, petrov, status="new")
+    assert item["ai_auto"] is False
+    r = client.post(f"{API}/studies/{item['id']}/analyze", headers=petrov)
+    assert r.status_code == 200, r.text
+    card = client.get(f"{API}/studies/{item['id']}", headers=petrov).json()
+    assert card["status"] == "ai_ready" and card["ai"]["id"] == r.json()["id"]
+    last = client.get(f"{API}/studies/{item['id']}/audit", headers=petrov).json()[-1]
+    assert last["action"] == "ai.analyzed" and last["actor_name"].startswith("Петров")
+
+
+def test_manual_retry(client, petrov, sidorova, chief):
+    sid, study = _failing_study(client, petrov)
+    analyze_all(client)
+
+    # Чужой врач не может, лечащий — может; сбой виден сразу и попадает в аудит с автором
+    assert client.post(f"{API}/studies/{sid}/analyze", headers=sidorova).status_code == 403
+    r = client.post(f"{API}/studies/{sid}/analyze", headers=petrov)
+    assert r.status_code == 502 and r.json()["error"]["code"] == "ai_failed"
+    last = client.get(f"{API}/studies/{sid}/audit", headers=petrov).json()[-1]
+    assert last["action"] == "ai.failed" and last["actor_name"].startswith("Петров")
+    assert study.ai_auto_failures == 1  # ручная попытка автосчётчик не трогает
+
+    study.report_text = study.report_text.replace(" [[ai_fail]]", "")
+    r = client.post(f"{API}/studies/{sid}/analyze", headers=chief)  # главврач тоже может
+    assert r.status_code == 200, r.text
+    card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
+    assert card["status"] == "ai_ready" and card["ai"]["id"] == r.json()["id"]
+    assert client.post(f"{API}/studies/{sid}/analyze", headers=petrov).status_code == 409
 
 
 def test_reanalysis_not_repeated_after_success(client, petrov):
@@ -322,3 +375,41 @@ def test_patient_can_login_but_not_use_ai(client):
         json={"report_text": "x", "study_type": "ct", "body_region": "chest"},
     )
     assert r.status_code == 403
+
+
+def test_manual_send_not_duplicated(client, petrov):
+    item = _study(client, petrov, status="new")
+    client.app.state.store.ai_in_flight.add(item["id"])  # запрос из другой вкладки ещё идёт
+    r = client.post(f"{API}/studies/{item['id']}/analyze", headers=petrov)
+    assert r.status_code == 409
+    client.app.state.store.ai_in_flight.clear()
+    assert client.post(f"{API}/studies/{item['id']}/analyze", headers=petrov).status_code == 200
+
+
+def test_manual_send_cooldown(client, petrov, monkeypatch):
+    """Одно исследование — не чаще раза в AI_SEND_COOLDOWN_S (10 с по умолчанию)."""
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("AI_SEND_COOLDOWN_S", "10")
+    get_settings.cache_clear()
+    sid, study = _failing_study(client, petrov)
+    r = client.post(f"{API}/studies/{sid}/analyze", headers=petrov)
+    assert r.status_code == 502  # ушло в AI, AI не ответил
+    r = client.post(f"{API}/studies/{sid}/analyze", headers=petrov)
+    assert r.status_code == 429
+    assert r.json()["error"]["code"] == "too_many_requests"
+    assert 0 < r.json()["error"]["details"]["retry_after_s"] <= 10
+    # Карточка сообщает, когда снова можно — фронт показывает отсчёт и после обновления страницы
+    card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
+    assert card["ai_send_after"] is not None
+    # В AI ушёл только первый запрос
+    actions = [e["action"] for e in client.get(f"{API}/studies/{sid}/audit", headers=petrov).json()]
+    assert actions.count("ai.failed") == 1
+
+    # Прошло 10 с — можно снова
+    from datetime import timedelta
+
+    store = client.app.state.store
+    store.ai_last_sent[sid] -= timedelta(seconds=11)
+    study.report_text = study.report_text.replace(" [[ai_fail]]", "")
+    assert client.post(f"{API}/studies/{sid}/analyze", headers=petrov).status_code == 200

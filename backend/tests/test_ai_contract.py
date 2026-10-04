@@ -11,8 +11,29 @@ GOOD = {
         {"type": "additional_research", "score": 0.87},
         {"type": "specialist_consult", "score": 0.09},
         {"type": "repeat_appointment", "score": 0.04},
+        {"type": "no_pathology", "score": 0.0},
     ],
     "reasons": [{"code": "nodule", "label": "Узел 8 мм", "weight": 0.42}],
+    "details": {"research_types": ["ct"]},
+}
+
+# Формат модели коллег (ai_service/analysis.py): без уверенности и весов
+COLLEAGUES = {
+    "request_id": "req_1",
+    "model": {"name": "Qwen/Qwen2.5-72B-Instruct", "version": "hf-inference"},
+    "recommendation": "specialist_consult",
+    "options_order": [
+        "specialist_consult",
+        "additional_research",
+        "repeat_appointment",
+        "no_pathology",
+    ],
+    "specialists": ["cardiologist"],
+    "research_types": [],
+    "reasons": [
+        {"code": "cardiomegaly", "label": "Кардиомегалия, КТИ 0,6"},
+        {"code": "rib_fracture", "label": "Консолидированный перелом ребра"},
+    ],
 }
 
 
@@ -57,9 +78,11 @@ def test_soft_fixes():
     r = parse_ai_response(data, expected_request_id="req_9")
     assert r.request_id == "req_9"
     assert r.model_name == "unknown"
+    # недостающие варианты делят остаток поровну: 0.3 / 2 = 0.15 > 0.1
     assert [o.type for o in r.ranked_options] == [
         "specialist_consult",
         "additional_research",
+        "no_pathology",
         "repeat_appointment",
     ]
     assert r.reasons[0].code == "reason_1"
@@ -77,7 +100,44 @@ def test_details_research_types_kept():
 
 
 def test_details_are_optional():
-    assert parse_ai_response(GOOD, expected_request_id="req_1").details == {}
+    data = {k: v for k, v in GOOD.items() if k != "details"}
+    r = parse_ai_response(data, expected_request_id="req_1")
+    assert r.details == {}
+    assert r.warnings == ("additional_research without research_types",)  # как их validate()
+
+
+def test_colleagues_format():
+    r = parse_ai_response(COLLEAGUES, expected_request_id="req_1")
+    assert r.warnings == ()
+    assert r.confidence is None
+    assert [str(o.type) for o in r.ranked_options] == COLLEAGUES["options_order"]
+    assert all(o.score is None for o in r.ranked_options)
+    assert r.details == {"specialists": ["cardiologist"]}
+    assert [x.weight for x in r.reasons] == [None, None]
+    assert r.to_contract_json()["options_order"] == COLLEAGUES["options_order"]
+
+
+def test_colleagues_format_soft_fixes():
+    data = {
+        **COLLEAGUES,
+        "options_order": ["repeat_appointment", "specialist_consult", "magic"],
+        "specialists": ["cardiologist", "astrologer"],
+        "warnings": ["коды не из справочника: ['astrologer']"],
+    }
+    r = parse_ai_response(data, expected_request_id="req_1")
+    assert [str(o.type) for o in r.ranked_options] == [
+        "specialist_consult",
+        "repeat_appointment",
+        "additional_research",
+        "no_pathology",
+    ]
+    assert r.details == {"specialists": ["cardiologist"]}
+    assert any(w.startswith("ai_service:") for w in r.warnings)
+    assert any("astrologer" in w for w in r.warnings)
+    assert any("magic" in w for w in r.warnings)
+    # без recommendation или причин — ответ отклоняется
+    with pytest.raises(AIContractError):
+        parse_ai_response({**COLLEAGUES, "reasons": []}, expected_request_id="req_1")
 
 
 def test_details_soft_validation():
@@ -105,3 +165,20 @@ def test_details_soft_validation():
         {**consult, "details": {"specialist": "shaman"}}, expected_request_id="req_1"
     )
     assert bad.details == {} and any("shaman" in w for w in bad.warnings)
+
+
+def test_no_pathology_recommendation():
+    data = {
+        **COLLEAGUES,
+        "recommendation": "no_pathology",
+        "options_order": [
+            "no_pathology",
+            "repeat_appointment",
+            "specialist_consult",
+            "additional_research",
+        ],
+        "specialists": [],
+        "reasons": [{"code": "normal", "label": "Патологических изменений не выявлено"}],
+    }
+    r = parse_ai_response(data, expected_request_id="req_1")
+    assert r.recommendation == "no_pathology" and r.details == {} and r.warnings == ()

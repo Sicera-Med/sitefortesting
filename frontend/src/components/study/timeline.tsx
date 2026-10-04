@@ -12,6 +12,7 @@ const ACTION_LABELS: Record<string, string> = {
   "ai.analyzed": "Анализ AI",
   "ai.reanalyzed": "Повторный анализ AI",
   "ai.failed": "Ошибка AI",
+  "ai.auto_stopped": "Автоповтор AI остановлен",
   "decision.created": "Решение врача",
   "notification.sent": "Уведомление отправлено",
   "notification.read": "Пациент прочитал уведомление",
@@ -38,7 +39,18 @@ export function Timeline({ studyId }: { studyId: string }) {
           {data.map((e) => (
             <li key={e.id} className="relative text-sm">
               <span className="absolute top-1.5 -left-[25px] size-2.5 rounded-full border-2 border-background bg-primary" />
-              <div className="font-medium">{ACTION_LABELS[e.action] ?? e.action}</div>
+              <div className="font-medium">
+                {ACTION_LABELS[e.action] ?? e.action}
+                {e.action === "ai.failed" && (
+                  <span className="font-normal text-muted-foreground">
+                    {e.payload.manual
+                      ? " · ручная отправка"
+                      : typeof e.payload.attempt === "number"
+                        ? ` · попытка ${e.payload.attempt} из ${e.payload.of}`
+                        : ""}
+                  </span>
+                )}
+              </div>
               <div className="text-xs text-muted-foreground">
                 {fmtDateTime(e.at)}
                 {` · ${e.actor_name ?? "автоматически"}`}

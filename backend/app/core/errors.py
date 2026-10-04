@@ -55,6 +55,11 @@ class InvalidTransitionError(ConflictError):
     code = "invalid_transition"
 
 
+class TooManyRequestsError(DomainError):
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    code = "too_many_requests"
+
+
 class InvalidInputError(DomainError):
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
     code = "validation_error"

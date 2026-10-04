@@ -90,10 +90,15 @@ function DashboardView() {
         </p>
       </div>
       <Kpis data={data} />
-      <div className="grid gap-6 lg:grid-cols-[1fr_1.4fr]">
-        <ByConfidence data={data} />
+      {/* Модель коллег уверенность не сообщает — блок только когда есть данные */}
+      {hasConfidence(data) ? (
+        <div className="grid gap-6 lg:grid-cols-[1fr_1.4fr]">
+          <ByConfidence data={data} />
+          <Matrix data={data} />
+        </div>
+      ) : (
         <Matrix data={data} />
-      </div>
+      )}
       <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
         <Doctors data={data} />
         <PatientResponse data={data} />
@@ -132,6 +137,11 @@ function Kpis({ data }: { data: Dashboard }) {
       />
     </div>
   );
+}
+
+function hasConfidence(data: Dashboard) {
+  const { high, low } = data.agreement_by_confidence;
+  return high.total + low.total > 0;
 }
 
 function ByConfidence({ data }: { data: Dashboard }) {
@@ -271,9 +281,11 @@ function RecentDecisions({ data }: { data: Dashboard }) {
                 {d.ai_recommendation ? (
                   <>
                     <div>{RECOMMENDATION_LABELS[d.ai_recommendation as RecommendationType]}</div>
-                    <div className="text-xs text-muted-foreground tabular-nums">
-                      уверенность {pct(d.ai_confidence)}
-                    </div>
+                    {d.ai_confidence != null && (
+                      <div className="text-xs text-muted-foreground tabular-nums">
+                        уверенность {pct(d.ai_confidence)}
+                      </div>
+                    )}
                   </>
                 ) : (
                   <span className="text-muted-foreground">—</span>

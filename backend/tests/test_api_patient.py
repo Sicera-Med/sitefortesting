@@ -460,3 +460,41 @@ def test_schedule_access(client, petrov, chief, manager):
     assert items and all(a["doctor"]["id"] == orlov["id"] for a in items)
     assert any(a["study_id"] for a in items)
     assert client.get(f"{API}/appointments", headers=manager).status_code == 403
+
+
+def test_no_pathology_closes_case(client, petrov, manager):
+    item = client.get(f"{API}/studies", params={"status": "new"}, headers=petrov).json()[0]
+    sid = item["id"]
+    # Только отдельно — вместе с другими направлениями нельзя
+    r = client.post(
+        f"{API}/studies/{sid}/decision",
+        headers=petrov,
+        json={"chosen_types": ["no_pathology", "repeat_appointment"]},
+    )
+    assert r.status_code == 422
+
+    r = client.post(
+        f"{API}/studies/{sid}/decision", headers=petrov, json={"chosen_types": ["no_pathology"]}
+    )
+    assert r.status_code == 200, r.text
+    card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
+    # Уведомление ушло, записываться некуда — кейс сразу завершён
+    assert card["status"] == "completed"
+    assert "патологии не выявлено" in card["notification"]["text"]
+    assert card["requirements"] == []
+
+    accounts = client.get(f"{API}/auth/demo-users").json()
+    email = next(a["email"] for a in accounts if a["full_name"] == item["patient"]["full_name"])
+    patient = login(client, email)
+    view = next(
+        x
+        for x in client.get(f"{API}/patients/me/notifications", headers=patient).json()
+        if x["notification"]["id"] == card["notification"]["id"]
+    )
+    assert view["requirements"] == [] and view["booking"] is None
+    nid = view["notification"]["id"]
+    assert client.post(f"{API}/notifications/{nid}/decline", headers=patient).status_code == 409
+
+    d = client.get(f"{API}/metrics/dashboard", headers=manager).json()
+    assert d["confusion_matrix"]["labels"][-1] == "no_pathology"
+    assert "no_pathology" not in {n["recommendation"] for n in d["notifications"]}

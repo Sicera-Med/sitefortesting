@@ -46,8 +46,15 @@ def get_ai_service(
     return AIService(provider, store, timeout_s=settings.AI_TIMEOUT_S)
 
 
-def get_study_service(store: StoreDep, ai: AIService = Depends(get_ai_service)) -> StudyService:
-    return StudyService(store, ai)
+def get_study_service(
+    store: StoreDep, settings: SettingsDep, ai: AIService = Depends(get_ai_service)
+) -> StudyService:
+    return StudyService(
+        store,
+        ai,
+        auto_analyze=settings.AI_AUTO_ANALYZE,
+        send_cooldown_s=settings.AI_SEND_COOLDOWN_S,
+    )
 
 
 def get_notification_service(store: StoreDep) -> NotificationService:

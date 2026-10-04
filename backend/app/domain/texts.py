@@ -9,6 +9,11 @@ _GREETING = "Здравствуйте! По результатам вашего 
 
 
 def notification_text(chosen: tuple[RecommendationType, ...], details: dict[str, Any]) -> str:
+    if RecommendationType.NO_PATHOLOGY in chosen:
+        return (
+            "Здравствуйте! По результатам вашего исследования патологии не выявлено. "
+            "Записываться на приём не нужно."
+        )
     parts: list[str] = []
     if RecommendationType.REPEAT_APPOINTMENT in chosen:
         parts.append("повторный приём")
