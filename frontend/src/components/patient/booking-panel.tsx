@@ -13,6 +13,9 @@ import { cn } from "@/lib/utils";
 
 import { SlotCalendar } from "./slot-calendar";
 
+// Запись — на ближайшие 3 месяца (HORIZON в backend/app/domain/schedule.py)
+const BOOKING_DAYS = 92;
+
 /** Куда записываемся: по направлению из решения врача или свободно. */
 export type BookingTarget =
   | { kind: "free" }
@@ -62,8 +65,8 @@ export function BookingPanel({
         : (pickedDoctorId ?? (inSpecialty.length === 1 ? inSpecialty[0].id : null));
   const doctor =
     target.kind === "treating" ? target.doctor : inSpecialty.find((d) => d.id === doctorId);
-  const doctorSlots = useSlots(doctorId, 14);
-  const researchSlots = useResearchSlots(research, 14);
+  const doctorSlots = useSlots(doctorId, BOOKING_DAYS);
+  const researchSlots = useResearchSlots(research, BOOKING_DAYS);
   const slots = research ? researchSlots : doctorSlots;
   const resource = research ?? doctorId;
 
@@ -175,7 +178,9 @@ export function BookingPanel({
           {slots.isLoading ? (
             <Skeleton className="h-72" />
           ) : !slots.data?.length ? (
-            <p className="text-sm text-muted-foreground">Нет свободного времени на 2 недели.</p>
+            <p className="text-sm text-muted-foreground">
+              Нет свободного времени в ближайшие 3 месяца.
+            </p>
           ) : (
             <SlotCalendar
               key={resource}

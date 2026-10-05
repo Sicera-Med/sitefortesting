@@ -152,7 +152,9 @@ def test_free_slots_exclude_busy_past_and_far_future():
     assert slots[4] not in free
     assert min(free) >= now + timedelta(hours=1)  # 09:00, 09:30, 10:00 недоступны
     assert free[0].astimezone(TZ).strftime("%H:%M") == "10:30"
-    assert schedule.free_slots(MONDAY + timedelta(days=21), TZ, now, set()) == []
+    # Запись — на 3 месяца вперёд (HORIZON = 92 дня), дальше — нельзя
+    assert schedule.free_slots(MONDAY + timedelta(days=84), TZ, now, set())  # 12 недель
+    assert schedule.free_slots(MONDAY + timedelta(days=98), TZ, now, set()) == []
 
 
 def test_is_bookable_rejects_unaligned_time():

@@ -14,7 +14,7 @@ WORK_START = time(9, 0)
 WORK_END = time(17, 0)
 SLOT = timedelta(minutes=30)
 MIN_LEAD = timedelta(hours=1)  # записаться можно не раньше чем через час
-HORIZON = timedelta(days=14)  # и не дальше чем на две недели
+HORIZON = timedelta(days=92)  # и не дальше чем на три месяца
 
 
 def day_slots(day: date, tz: ZoneInfo) -> list[datetime]:

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query
 from app.api.deps import AppointmentServiceDep, CurrentUser
 from app.core.errors import InvalidInputError
 from app.domain.enums import AppointmentStatus
+from app.domain.schedule import HORIZON
 from app.schemas.common import DoctorBrief
 from app.schemas.patients import AppointmentIn, AppointmentOut, AppointmentPatch, DaySlotsOut
 
@@ -31,7 +32,7 @@ async def slots(
     user: CurrentUser,
     service: AppointmentServiceDep,
     start: Annotated[date | None, Query(description="С какой даты, по умолчанию сегодня")] = None,
-    days: Annotated[int, Query(ge=1, le=14)] = 7,
+    days: Annotated[int, Query(ge=1, le=HORIZON.days)] = 7,
 ) -> list[DaySlotsOut]:
     return [DaySlotsOut.build(d) for d in service.slots(doctor_id, start=start, days=days)]
 
@@ -46,7 +47,7 @@ async def research_slots(
     user: CurrentUser,
     service: AppointmentServiceDep,
     start: Annotated[date | None, Query(description="С какой даты, по умолчанию сегодня")] = None,
-    days: Annotated[int, Query(ge=1, le=14)] = 7,
+    days: Annotated[int, Query(ge=1, le=HORIZON.days)] = 7,
 ) -> list[DaySlotsOut]:
     return [DaySlotsOut.build(d) for d in service.research_slots(code, start=start, days=days)]
 

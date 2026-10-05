@@ -1,5 +1,7 @@
 """Сценарий: врач решает и уведомляет → пациент читает и записывается → дашборд."""
 
+from datetime import date
+
 from tests.conftest import analyze_all, login
 
 API = "/api/v1"
@@ -529,3 +531,23 @@ def test_dashboard_funnel_and_doctor_details(client, manager):
     # Все 11 врачей, включая тех, у кого решений ещё нет; с решениями — сверху
     assert len(d["by_doctor"]) == 11
     assert d["by_doctor"][-1]["decisions"] == 0
+
+
+def test_booking_horizon_three_months(client, kuznetsova):
+    doctor = client.get(f"{API}/doctors", headers=kuznetsova).json()[0]["id"]
+    url = f"{API}/doctors/{doctor}/slots"
+    days = client.get(url, params={"days": 92}, headers=kuznetsova).json()
+    assert client.get(url, params={"days": 93}, headers=kuznetsova).status_code == 422
+    # Последний день со свободным временем — примерно через 3 месяца
+    first, last = days[0]["date"], days[-1]["date"]
+    assert (date.fromisoformat(last) - date.fromisoformat(first)).days >= 85
+    # Запись через ~2 месяца проходит
+    far = next(
+        d for d in days if (date.fromisoformat(d["date"]) - date.fromisoformat(first)).days >= 60
+    )
+    r = client.post(
+        f"{API}/appointments",
+        headers=kuznetsova,
+        json={"doctor_id": doctor, "scheduled_for": far["slots"][0]},
+    )
+    assert r.status_code == 200, r.text
