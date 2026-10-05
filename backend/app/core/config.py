@@ -62,8 +62,8 @@ class Settings(BaseSettings):
     AI_SEND_COOLDOWN_S: float = Field(default=10, ge=0)
     # Напоминания пациенту (раз в неделю, до 3 раз) — фоновый воркер; в тестах выключен
     NOTIFY_REMINDERS: bool = True
-    # Адрес сайта для ссылок в SMS / email (на сцене — доступный с телефона)
-    SITE_URL: str = "http://localhost:3000"
+    # Адрес сайта для ссылок в SMS / email — публичный сайт; локально можно http://<IP>:3000
+    SITE_URL: str = "https://sicera-ai.onrender.com"
     # Настоящие рассылки (services/channels.py). false — всё имитируется, как раньше
     NOTIFY_REAL: bool = False
     NOTIFY_SMS: bool = True  # при NOTIFY_REAL: SMS через SMSPilot
