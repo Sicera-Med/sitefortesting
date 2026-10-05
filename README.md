@@ -79,17 +79,69 @@ flowchart LR
 - Свободные порты 3000 и 8000.
 - Для ответов модели — токен Hugging Face. Без него всё работает, исследования показывают «AI не отвечает».
 
-### Запуск
+### Запуск за 4 шага
+
+**1. Скачайте проект**
 
 ```bash
-git clone <репозиторий> && cd sitefortesting
-cp config/ai_service.env.example config/ai_service.env   # вписать HF_TOKEN (необязательно)
-cp config/backend.env.example    config/backend.env      # необязательно: рассылки, SITE_URL
+git clone https://github.com/Sicera-Med/sitefortesting.git
+cd sitefortesting
+```
+
+**2. Вставьте токен Hugging Face** — без него сайт работает, но вместо рекомендаций AI будет «AI не отвечает».
+
+Получите токен: [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) → «Create new token» → тип **Read** (или Fine-grained с правом «Make calls to Inference Providers») → скопируйте строку вида `hf_…`.
+
+Создайте файл настроек из шаблона:
+
+```bash
+cp config/ai_service.env.example config/ai_service.env
+```
+
+Откройте **`config/ai_service.env`** и вставьте токен после `HF_TOKEN=` (без кавычек и пробелов):
+
+```ini
+HF_TOKEN=hf_ваш_токен
+MODEL=Qwen/Qwen3-4B-Instruct-2507
+```
+
+**3. Запустите**
+
+```bash
 docker compose up --build
 ```
 
-- Сайт: http://localhost:3000 (с телефона в той же сети — `http://<IP-компьютера>:3000`)
-- Документация API (Swagger): http://localhost:8000/docs
+Первая сборка занимает несколько минут. Готово, когда в логах появится `frontend-1 | ✓ Ready`.
+
+**4. Откройте сайт:** http://localhost:3000 — войдите кнопкой быстрого входа (см. ниже).
+
+- С телефона в той же Wi-Fi-сети — `http://<IP-компьютера>:3000`
+- Документация API (Swagger) — http://localhost:8000/docs
+- Остановить — `Ctrl+C`, после смены настроек — снова `docker compose up --build`
+
+#### Необязательно: настоящие SMS и email
+
+```bash
+cp config/backend.env.example config/backend.env
+```
+
+В **`config/backend.env`** заполните:
+
+```ini
+NOTIFY_REAL=true
+# SMS: ключ API из кабинета smspilot.ru
+SMSPILOT_API_KEY=ваш_ключ
+# Email: ящик-отправитель и пароль приложения (id.yandex.ru → Безопасность → Пароли приложений)
+SMTP_USER=ящик@yandex.ru
+SMTP_PASSWORD=пароль_приложения
+# Куда придут SMS и письма всех демо-пациентов
+DEMO_CONTACT_PHONE=+79990000000
+DEMO_CONTACT_EMAIL=you@example.com
+# Адрес сайта в ссылках из SMS и писем
+SITE_URL=http://<IP-компьютера>:3000
+```
+
+Без этого файла рассылки не отправляются — уведомления видны только в личном кабинете пациента.
 
 ### Демо-аккаунты
 
