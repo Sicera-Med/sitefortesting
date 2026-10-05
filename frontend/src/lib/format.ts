@@ -48,11 +48,6 @@ export const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   social: "Соцсеть",
 };
 
-/** «SMS, Email» — каналы, куда ушло уведомление. */
-export function channelsText(channels: NotificationChannel[]): string {
-  return channels.map((c) => CHANNEL_LABELS[c]).join(", ") || "только личный кабинет";
-}
-
 export const ROLE_LABELS = {
   chief: "Главный врач",
   manager: "Менеджер",
@@ -101,16 +96,6 @@ export function fmtTime(iso: string): string {
     timeZone: TZ,
     hour: "2-digit",
     minute: "2-digit",
-  });
-}
-
-/** «пн, 05.10» для заголовков дней со слотами (date — YYYY-MM-DD). */
-export function fmtDay(date: string): string {
-  return new Date(`${date}T12:00:00Z`).toLocaleDateString("ru-RU", {
-    timeZone: TZ,
-    weekday: "short",
-    day: "2-digit",
-    month: "2-digit",
   });
 }
 

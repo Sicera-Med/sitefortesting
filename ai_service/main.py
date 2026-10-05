@@ -38,7 +38,12 @@ from b2c import build_input, system_prompt_for, validate_b2c_response
 
 logger = logging.getLogger("ai_service")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ENV_PATH = os.path.join(BASE_DIR, ".env")
+# Настройки — config/ai_service.env в корне репозитория; ai_service/.env, если есть, — поверх.
+# В Docker переменные задаёт docker-compose
+ENV_PATHS = (
+    os.path.join(BASE_DIR, "..", "config", "ai_service.env"),
+    os.path.join(BASE_DIR, ".env"),
+)
 
 # Адреса официальных страниц документов справочника (doc → url) — наша доработка их данных
 with open(os.path.join(BASE_DIR, "source_urls.json"), encoding="utf-8") as _f:
@@ -54,7 +59,8 @@ def settings() -> tuple[str, str]:
     """(HF_TOKEN, MODEL); MODEL в .env — одна модель или несколько через запятую, берём первую."""
     if HF_TOKEN and MODEL:
         return HF_TOKEN, MODEL
-    load_dotenv(ENV_PATH, override=True)
+    for path in ENV_PATHS:
+        load_dotenv(path, override=True)
     models = [m.strip() for m in os.environ.get("MODEL", "").split(",") if m.strip()]
     return os.environ.get("HF_TOKEN", "").strip(), models[0] if models else ""
 
@@ -161,7 +167,7 @@ def _require_settings() -> str:
     token, model = settings()
     if not token or not model:
         raise HTTPException(
-            503, "AI-сервис не настроен: укажите HF_TOKEN и MODEL в ai_service/.env"
+            503, "AI-сервис не настроен: укажите HF_TOKEN и MODEL в config/ai_service.env"
         )
     return model
 

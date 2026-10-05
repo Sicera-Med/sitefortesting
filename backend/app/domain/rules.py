@@ -1,6 +1,11 @@
-"""Бизнес-правила: переходы статусов Study и права на конкретный объект.
+"""Бизнес-правила: переходы статусов Study, права, направления пациента и напоминания.
 
-Функции чистые и возвращают bool — ошибки поднимает сервисный слой.
+Функции чистые и возвращают bool / данные — ошибки поднимает сервисный слой.
+
+Маршрут пациента после решения врача: каждое выбранное направление (повторный приём,
+каждый специалист, каждое исследование) — отдельная запись; кейс закрыт, только когда
+записи есть по всем. «Экстренная госпитализация» и «патологии не выявлено» направлений
+не порождают — кейс закрывается сразу после уведомления, напоминаний нет.
 """
 
 from __future__ import annotations
@@ -23,8 +28,8 @@ from app.domain.models import Appointment, Decision, Notification, Patient, Stud
 S = StudyStatus
 
 # Единственный источник правды о переходах (SPEC §5.3).
-# Анализ запускается автоматически; ai_failed → повтор. Решение врач может принять
-# в любой момент до него — с AI или без.
+# В AI исследование уходит при открытии карточки или кнопкой; ai_failed → повтор.
+# Решение врач может принять в любой момент — с AI или без: AI только подсказывает.
 TRANSITIONS: Mapping[StudyStatus, frozenset[StudyStatus]] = {
     S.NEW: frozenset({S.AI_READY, S.AI_FAILED, S.DECIDED}),
     S.AI_READY: frozenset({S.AI_READY, S.AI_FAILED, S.DECIDED}),
@@ -175,7 +180,10 @@ class Requirement:
 
 
 def required_bookings(decision: Decision) -> list[Requirement]:
-    """Куда пациенту записаться: кейс закрыт, только когда покрыто всё."""
+    """Куда пациенту записаться: кейс закрыт, только когда покрыто всё.
+
+    URGENT_HOSPITALIZATION и NO_PATHOLOGY сюда не попадают — для них список пуст.
+    """
     chosen = decision.chosen_types
     result: list[Requirement] = []
     if RecommendationType.REPEAT_APPOINTMENT in chosen:

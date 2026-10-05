@@ -1,15 +1,20 @@
-"""AI-контракт v1.3 (SPEC §6) — формат обмена с AI-сервисом коллег.
+"""AI-контракт v2 (SPEC §6, docs/ai-contract.md) — формат обмена с AI-сервисом.
 
 ВНИМАНИЕ: менять формат только по согласованию с AI-командой.
 
-Модель коллег (ai_service/analysis.py) отвечает:
-  recommendation, options_order, specialists, research_types, reasons[{code, label}]
-— без уверенности и весов. Старый формат v1 (confidence, ranked_options со score,
-details, weight у причин) тоже принимается.
+Модель AI-команды (ai_service/analysis.py) по сырым полям DICOM SR отвечает вариантами маршрута:
+  options[{type, recommended, items[{code, reason, timing, source_refs}], rationale}], reasons
+— без уверенности. Старые форматы v1 (confidence, ranked_options) и v1.3 (options_order)
+тоже принимаются: для тестов и ручной загрузки JSON.
 
-Валидация двухуровневая (§6.3):
-- строго — recommendation и непустые reasons с label; нарушение → AIContractError;
-- мягко — confidence, порядок вариантов, детали, request_id, model: чиним сами и пишем warning.
+Валидация двухуровневая (§6.3): демо не должно падать из-за мелких расхождений формата.
+- строго — хотя бы один вариант известного типа и непустые reasons (находки) → иначе
+  AIContractError, исследование уходит в «AI не отвечает»;
+- мягко — неизвестные типы и коды справочника, несколько «основных», чужой request_id:
+  отбрасываем или чиним сами и пишем warning (он виден врачу в карточке).
+
+Медицинский смысл нормализации: врачу показываются только коды из справочника клиники
+(к ним можно записать пациента), а предвыбор в форме решения — основной вариант модели.
 """
 
 from __future__ import annotations
@@ -233,6 +238,11 @@ def _text(value: Any) -> str | None:
 
 
 def _clean_option(raw: dict[str, Any], warnings: list[str]) -> dict[str, Any] | None:
+    """Один вариант модели: тип из 5, пункты — только коды справочника, без повторов.
+
+    У «экстренной госпитализации» и «патологии не выявлено» пунктов нет (allowed пуст) —
+    всё, что модель туда положила, отбрасывается.
+    """
     try:
         kind = RecommendationType(raw.get("type"))
     except ValueError:
@@ -271,6 +281,8 @@ def _clean_option(raw: dict[str, Any], warnings: list[str]) -> dict[str, Any] | 
 
 
 def _parse_options(data: dict[str, Any], expected_request_id: str) -> AIResult:
+    """Формат v2. recommendation — тип основного варианта; details — коды его пунктов
+    (на них держатся предвыбор в форме решения, accepted_ai и details_match)."""
     warnings: list[str] = [f"ai_service: {w}" for w in data.get("warnings") or []]
     options: list[dict[str, Any]] = []
     for raw in data.get("options") or []:

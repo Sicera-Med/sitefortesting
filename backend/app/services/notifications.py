@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -12,7 +11,6 @@ from app.core.errors import (
     ForbiddenError,
     InvalidTransitionError,
     NotFoundError,
-    TooManyRequestsError,
 )
 from app.core.ids import new_id
 from app.domain import rules
@@ -43,6 +41,7 @@ from app.domain.texts import (
     study_title,
 )
 from app.services import audit, channels
+from app.services.cooldown import check_cooldown
 from app.store import Store
 
 logger = logging.getLogger(__name__)
@@ -160,13 +159,7 @@ class NotificationService:
             raise ConflictError(f"Все {rules.MAX_REMINDERS} напоминания уже отправлены")
         now = utcnow()
         last = max((d.at for d in notification.deliveries), default=None)
-        if last is not None:
-            wait = cooldown_s - (now - last).total_seconds()
-            if wait > 0:
-                raise TooManyRequestsError(
-                    f"Напомнить снова можно через {math.ceil(wait)} с",
-                    details={"retry_after_s": math.ceil(wait)},
-                )
+        check_cooldown(last, now, cooldown_s, "Напомнить снова можно через {s} с")
         send_reminder(self.store, notification, now, actor=user)
         return notification
 

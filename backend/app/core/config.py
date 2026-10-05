@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -6,10 +7,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEFAULT_JWT_SECRET = "dev-secret-change-me-in-prod-0123456789"  # ≥ 32 байт для HS256
 
+# Настройки — в config/backend.env в корне репозитория (шаблон: config/backend.env.example);
+# backend/.env, если есть, переопределяет. В Docker переменные задаёт docker-compose.
+_ROOT = Path(__file__).resolve().parents[3]
+ENV_FILES = (_ROOT / "config" / "backend.env", ".env")
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILES,
         env_file_encoding="utf-8",  # явная кодировка
         extra="ignore",
         case_sensitive=False,  # APP_ENV и app_env равнозначны
@@ -78,9 +84,6 @@ class Settings(BaseSettings):
 
     # --- Клиника ---
     CLINIC_TZ: str = "Europe/Moscow"  # слоты записи считаются в этом поясе
-
-    # --- Storage ---
-    STORAGE: Literal["memory", "sql"] = "memory"
 
     # --- Seed ---
     SEED_ON_START: bool = True

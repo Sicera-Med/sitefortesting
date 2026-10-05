@@ -57,6 +57,8 @@ db.sqlite3
 .env
 .env.*
 !.env.example
+# Настройки сервисов — config/*.env (в git только шаблоны *.env.example)
+config/*.env
 backend/.env
 frontend/.env.local
 backend/app/core/secrets.toml
@@ -100,4 +102,5 @@ pnpm-debug.log*
 CLAUDE.md
 CLAUDE.local.md
 .claude/
-docs/
+# внутренние заметки; публичная документация — docs/*.md
+docs/internal/

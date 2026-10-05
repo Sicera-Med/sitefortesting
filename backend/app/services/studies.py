@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Literal
@@ -14,7 +13,6 @@ from app.core.errors import (
     InvalidInputError,
     InvalidTransitionError,
     NotFoundError,
-    TooManyRequestsError,
 )
 from app.core.ids import new_id
 from app.domain import rules
@@ -33,6 +31,7 @@ from app.domain.models import (
 from app.domain.sr import STUDY_KINDS, parse_sr
 from app.services import audit
 from app.services.ai_service import AIService
+from app.services.cooldown import check_cooldown
 from app.services.notifications import NotificationService, RequirementView, requirement_views
 from app.store import Store
 
@@ -237,14 +236,12 @@ class StudyService:
         if study.id in self.store.ai_in_flight:
             raise ConflictError("Заключение уже отправлено в AI, ждём ответ")
         now = utcnow()
-        last = self.store.ai_last_sent.get(study.id)
-        if last is not None:
-            wait = self.send_cooldown_s - (now - last).total_seconds()
-            if wait > 0:
-                raise TooManyRequestsError(
-                    f"Повторно отправить можно через {math.ceil(wait)} с",
-                    details={"retry_after_s": math.ceil(wait)},
-                )
+        check_cooldown(
+            self.store.ai_last_sent.get(study.id),
+            now,
+            self.send_cooldown_s,
+            "Повторно отправить можно через {s} с",
+        )
         self.store.ai_last_sent[study.id] = now
         self.store.ai_in_flight.add(study.id)
         try:
@@ -279,9 +276,12 @@ class StudyService:
         if key in self.store.ai_in_flight:
             raise ConflictError("Объяснение уже готовится")
         now = utcnow()
-        last = self.store.ai_last_sent.get(key)
-        if last is not None and (now - last).total_seconds() < self.send_cooldown_s:
-            raise TooManyRequestsError("Объяснение готовится, попробуйте через несколько секунд")
+        check_cooldown(
+            self.store.ai_last_sent.get(key),
+            now,
+            self.send_cooldown_s,
+            "Объяснение готовится, попробуйте через несколько секунд",
+        )
         self.store.ai_last_sent[key] = now
         self.store.ai_in_flight.add(key)
         try:

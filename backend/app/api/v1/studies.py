@@ -79,7 +79,7 @@ async def decide(
 @router.post(
     "/{study_id}/analyze",
     response_model=InferenceOut,
-    summary="Повторно отправить в AI после сбоя (лечащий врач или главврач)",
+    summary="Отправить в AI: при открытии карточки или после сбоя (лечащий врач, главврач)",
 )
 async def retry_ai(study_id: str, user: DoctorUser, service: StudyServiceDep) -> InferenceOut:
     return InferenceOut.build(await service.retry_ai(user, study_id))

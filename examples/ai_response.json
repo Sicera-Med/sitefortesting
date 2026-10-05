@@ -1,0 +1,68 @@
+{
+  "_comment": "Иллюстрация ФОРМАТА ответа (docs/ai-contract.md), а не реальный ответ модели: состав вариантов собран вручную для примера",
+  "request_id": "req_01J9EXAMPLE0000000000000000",
+  "model": {
+    "name": "Qwen/Qwen3-4B-Instruct-2507",
+    "version": "hf-inference"
+  },
+  "options": [
+    {
+      "type": "additional_research",
+      "recommended": true,
+      "items": [
+        {
+          "code": "ct_angiography",
+          "reason": "Дилатация восходящей аорты 40 мм",
+          "timing": "через 6–12 месяцев",
+          "sources": [
+            "kr_aorta_followup"
+          ],
+          "source_refs": [
+            {
+              "text": "Клинические рекомендации «Аневризмы грудной и торакоабдоминальной аорты» (Рубрикатор клинических рекомендаций Минздрава России, ID 919_1, 2025), стр. 89",
+              "document": "Клинические рекомендации «Аневризмы грудной и торакоабдоминальной аорты»",
+              "organization": "Рубрикатор клинических рекомендаций Минздрава России, ID 919_1",
+              "year": 2025,
+              "pages": "89",
+              "url": "https://cr.minzdrav.gov.ru/view-cr/919_1"
+            }
+          ],
+          "unconfirmed_sources": []
+        }
+      ],
+      "sources": [],
+      "source_refs": [],
+      "rationale": "Расширение восходящей аорты — контроль размеров по КР «Аневризмы грудной аорты»."
+    },
+    {
+      "type": "specialist_consult",
+      "recommended": false,
+      "items": [
+        {
+          "code": "cardiologist",
+          "reason": "CAC-DRS A2, паракардиальный жир 387 мл",
+          "timing": null,
+          "sources": [],
+          "source_refs": [],
+          "unconfirmed_sources": []
+        }
+      ],
+      "sources": [],
+      "source_refs": [],
+      "rationale": "Оценка сердечно-сосудистого риска у кардиолога."
+    }
+  ],
+  "reasons": [
+    {
+      "code": "aorta_dilation",
+      "label": "Дилатация восходящей аорты 40 мм"
+    },
+    {
+      "code": "cac",
+      "label": "Коронарный кальций: Agatston 164, CAC-DRS A2"
+    }
+  ],
+  "need_full_guidelines": false,
+  "guidelines_mode": "по словам протокола",
+  "warnings": []
+}

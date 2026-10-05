@@ -2,7 +2,8 @@
 
 import type { ApiErrorBody } from "./types";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+// По умолчанию — через прокси самого сайта (next.config.ts rewrites); можно задать полный URL
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/v1";
 
 const TOKEN_KEY = "triage.token";
 
@@ -44,7 +45,7 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
 type Query = Record<string, string | number | string[] | undefined | null>;
 
 function buildUrl(path: string, query?: Query) {
-  const url = new URL(API_URL + path);
+  const url = new URL(API_URL + path, window.location.origin); // API_URL может быть относительным
   for (const [k, v] of Object.entries(query ?? {})) {
     if (v == null) continue;
     if (Array.isArray(v)) v.forEach((item) => url.searchParams.append(k, item));

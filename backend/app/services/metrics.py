@@ -55,7 +55,7 @@ class MetricsService:
             "decisions_total": len(decisions),
             "decisions_without_ai": sum(d.accepted_ai is None for d in decisions),
             "ai_runs": len(self.store.inferences),
-            "ai_failures": sum(e.action == "ai.failed" for e in self.store.audit),
+            "ai_failures": self.store.audit_count("ai.failed"),
         }
 
     def _by_confidence(self, with_ai: list[Decision]) -> dict[str, Any]:

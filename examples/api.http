@@ -1,0 +1,54 @@
+### Примеры запросов к API (REST Client в VS Code / JetBrains HTTP Client; или перепишите в curl)
+### Полный список — docs/api.md, интерактивно — http://localhost:8000/docs
+
+@base = http://localhost:8000/api/v1
+
+### 1. Вход врача → access_token
+# @name login
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{"email": "petrov@clinic.demo", "password": "demo"}
+
+###
+@token = {{login.response.body.access_token}}
+
+### 2. Очередь врача (его исследования в работе)
+GET {{base}}/studies?status=new&status=ai_ready&status=ai_failed
+Authorization: Bearer {{token}}
+
+### 3. Пациенты для нового исследования
+GET {{base}}/studies/patients
+Authorization: Bearer {{token}}
+
+### 4. Новое исследование из протокола DICOM SR (patient_id — из запроса 3)
+# @name study
+POST {{base}}/studies
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "patient_id": "pat_…",
+  "study_type": "ct",
+  "body_region": "chest",
+  "description": "Очаги и образования легких- не обнаружены\nГрудная аорта- наибольшее значение диаметра восходящей части грудной аорты: 40 мм",
+  "conclusion": "Дилатация восходящей аорты."
+}
+
+### 5. Отправить в AI (ответ модели — 30–60 с; без AI-сервиса — 502 «AI не отвечает»)
+POST {{base}}/studies/{{study.response.body.id}}/analyze
+Authorization: Bearer {{token}}
+
+### 6. Решение врача (можно и без AI) — пациенту сразу уходит уведомление
+POST {{base}}/studies/{{study.response.body.id}}/decision
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "chosen_types": ["additional_research", "specialist_consult"],
+  "details": {"research_types": ["ct_angiography"], "specialists": ["cardiologist"]},
+  "comment": "Контроль аорты через 6–12 месяцев"
+}
+
+### 7. Справочники (публичный): типы рекомендаций, специалисты, исследования
+GET {{base}}/dictionaries

@@ -1,0 +1,39 @@
+# Всё решение одной командой: docker compose up --build
+#   сайт        http://localhost:3000   (с другого устройства — http://<IP-ноутбука>:3000)
+#   backend API http://localhost:8000/docs (Swagger)
+# Настройки — config/*.env (шаблоны: config/*.env.example). Без них всё тоже запускается:
+# без HF_TOKEN исследования показывают «AI не отвечает», без ключей рассылок — имитация.
+
+services:
+  ai:
+    build: ./ai_service
+    env_file:
+      - path: config/ai_service.env
+        required: false
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: config/backend.env
+        required: false
+    environment:
+      AI_BASE_URL: http://ai:8001
+    depends_on:
+      ai:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_INTERNAL_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
