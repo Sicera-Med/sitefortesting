@@ -1,4 +1,4 @@
-"""Протокол = раздел «Описание» DICOM SR (поля БФТ); новое исследование из сырых данных."""
+"""Протокол = описание находок «Поле- значение»; заключение отбрасывается; новое исследование."""
 
 from app.domain.sr import parse_sr, report_text
 
@@ -11,11 +11,12 @@ CUSTOMER_SR = """Описание
 Обнаружена дилатация восходящей части грудной аорты
 Коронарный кальций- кальциевый индекс (Agatston): 164; CAC DRS A2.
 Качество исследования (PGMI): G
-Заключение: Дилатация восходящей аорты."""
+Заключение: Дилатация восходящей аорты.
+BI-RADS 4"""
 
 
 def test_parse_customer_format():
-    fields, conclusion = parse_sr(CUSTOMER_SR)
+    fields = parse_sr(CUSTOMER_SR)
     assert [f.name for f in fields] == [
         "Очаги и образования легких",
         "Грудная аорта",
@@ -25,11 +26,12 @@ def test_parse_customer_format():
     # строка без разделителя — продолжение предыдущего значения; «:» внутри значения не режем
     assert fields[1].value.endswith("40 мм. Обнаружена дилатация восходящей части грудной аорты")
     assert fields[2].value == "кальциевый индекс (Agatston): 164; CAC DRS A2."
-    assert conclusion == "Дилатация восходящей аорты."
-    # В AI — как report_text(t) у AI-команды
-    text = report_text(fields, conclusion)
+    # Заключение и всё после него в систему не берём
+    assert all(f.value != "Дилатация восходящей аорты." for f in fields)
+    # В AI — как report_text(t) у AI-команды, только описание
+    text = report_text(fields)
     assert text.startswith("Описание: Очаги и образования легких: не обнаружены.")
-    assert text.endswith("\nЗаключение: Дилатация восходящей аорты.")
+    assert "Заключение" not in text and "BI-RADS" not in text
 
 
 def test_create_study_from_sr(client, petrov, chief):
@@ -45,7 +47,7 @@ def test_create_study_from_sr(client, petrov, chief):
     assert r.status_code == 200, r.text
     card = r.json()
     assert card["status"] == "new" and card["can_act"]
-    assert len(card["sr_fields"]) == 4 and card["conclusion"] == "Дилатация восходящей аорты."
+    assert len(card["sr_fields"]) == 4 and "conclusion" not in card
     assert card["doctor"]["full_name"].startswith("Петров")  # врач создаёт себе
 
     # Тип без шаблона БФТ — нельзя; пустой протокол — нельзя

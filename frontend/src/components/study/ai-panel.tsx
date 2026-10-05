@@ -41,7 +41,7 @@ export function AIPanel({ study }: { study: StudyCard }) {
   const failed = study.status === "ai_failed";
   const decidedWithoutAI = !ai && !waiting && !notSent && !failed;
 
-  // Открыл карточку тот, кто решает по исследованию, — новое заключение уходит в AI само.
+  // Открыл карточку тот, кто решает по исследованию, — новое исследование уходит в AI само.
   // Один раз за открытие; после сбоя — только кнопкой (каждое открытие тратило бы запрос)
   const sent = useRef(false);
   const { mutate: send } = retry;
@@ -105,26 +105,26 @@ export function AIPanel({ study }: { study: StudyCard }) {
         {waiting && (
           <div className="flex flex-col items-center gap-2 py-8 text-center text-sm text-muted-foreground">
             <Loader2 className="size-6 animate-spin text-primary" />
-            AI анализирует заключение…
+            AI анализирует протокол…
             <span className="text-xs">Решение можно принять, не дожидаясь ответа.</span>
           </div>
         )}
 
         {notSent && !sending && (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            Заключение ещё не отправлено в AI.
+            Протокол ещё не отправлен в AI.
             <br />
             <span className="text-xs">
               {study.can_act
                 ? "Нажмите «Отправить в AI» или примите решение без рекомендации."
-                : "Отправить может лечащий врач или главврач."}
+                : "Отправит лечащий врач, когда откроет исследование."}
             </span>
           </p>
         )}
         {notSent && sending && (
           <div className="flex flex-col items-center gap-2 py-8 text-center text-sm text-muted-foreground">
             <Loader2 className="size-6 animate-spin text-primary" />
-            AI анализирует заключение…
+            AI анализирует протокол…
           </div>
         )}
 
@@ -256,12 +256,6 @@ function InferenceV2({ ai }: { ai: Inference }) {
 function Footer({ ai }: { ai: Inference }) {
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-1 border-t pt-3 text-xs text-muted-foreground">
-      <span>
-        Модель:{" "}
-        <span className="font-mono">
-          {ai.model_name} {ai.model_version}
-        </span>
-      </span>
       <span>Источник: {SOURCE_LABELS[ai.source]}</span>
       {ai.guidelines_mode && <span>Справочник КР: {ai.guidelines_mode}</span>}
       <span>Время ответа: {ai.latency_ms} мс</span>

@@ -114,7 +114,6 @@ class StudyIn(BaseModel):
     study_type: StudyType
     body_region: str
     description: str = Field(max_length=20_000)  # раздел «Описание»: строки «Поле- значение»
-    conclusion: str | None = Field(default=None, max_length=5_000)
     performed_at: datetime | None = None
     treating_doctor_id: str | None = None  # главврач выбирает; врачу — он сам
 
@@ -326,7 +325,6 @@ class StudyCard(BaseModel):
     created_at: datetime
     # Протокол: раздел «Описание» DICOM SR и заключение; report_text — как он уходит в AI
     sr_fields: list[SRFieldOut]
-    conclusion: str | None
     report_text: str
     patient: PatientBrief
     doctor: DoctorBrief
@@ -351,7 +349,6 @@ class StudyCard(BaseModel):
             performed_at=s.performed_at,
             created_at=s.created_at,
             sr_fields=[SRFieldOut(name=f.name, value=f.value) for f in s.sr_fields],
-            conclusion=s.conclusion,
             report_text=s.report_text,
             patient=PatientBrief.build(v.patient, s.performed_at),
             doctor=DoctorBrief.build(v.doctor),

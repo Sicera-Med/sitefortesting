@@ -1,7 +1,8 @@
-"""Каналы уведомлений: SMS (SMSPilot) и email (SMTP Яндекса). Соцсети — всегда имитация.
+"""Каналы уведомлений: SMS (SMSPilot) и email (SMTP).
 
 Отправка блокирующая (HTTP / SMTP) — её делает фоновая очередь services/outbox.py в потоке,
-решение врача отправки не ждёт. При NOTIFY_REAL=false или без ключей — имитация, как раньше.
+решение врача отправки не ждёт. При NOTIFY_REAL=false или без ключей — не отправляется
+(статус simulated с причиной в истории отправок).
 """
 
 from __future__ import annotations
@@ -26,9 +27,9 @@ class ChannelError(Exception):
 
 
 def plan(settings: Settings, channel: NotificationChannel) -> tuple[DeliveryStatus, str | None]:
-    """Отправлять по-настоящему (PENDING — в очередь) или имитировать — и почему."""
-    if not settings.NOTIFY_REAL or channel is NotificationChannel.SOCIAL:
-        return DeliveryStatus.SIMULATED, None
+    """Отправлять (PENDING — в очередь) или нет (SIMULATED) — и почему не отправлено."""
+    if not settings.NOTIFY_REAL:
+        return DeliveryStatus.SIMULATED, "рассылка выключена (NOTIFY_REAL=false)"
     if channel is NotificationChannel.SMS:
         if not settings.NOTIFY_SMS:
             return DeliveryStatus.SIMULATED, "канал SMS выключен"

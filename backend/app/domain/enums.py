@@ -47,7 +47,6 @@ class AISource(StrEnum):
 class NotificationChannel(StrEnum):
     SMS = "sms"
     EMAIL = "email"
-    SOCIAL = "social"
 
 
 class DeliveryStatus(StrEnum):
@@ -55,13 +54,6 @@ class DeliveryStatus(StrEnum):
     SENT = "sent"  # ушло через SMSPilot / SMTP
     FAILED = "failed"  # канал вернул ошибку
     SIMULATED = "simulated"  # имитация: настоящая отправка выключена или не настроена
-
-
-class SocialNetwork(StrEnum):
-    TELEGRAM = "telegram"
-    VK = "vk"
-    WHATSAPP = "whatsapp"
-    MAX = "max"
 
 
 class NotificationStatus(StrEnum):

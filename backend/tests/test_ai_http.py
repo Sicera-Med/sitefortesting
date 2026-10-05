@@ -8,7 +8,7 @@ import json
 import httpx
 
 from app.ai.http_provider import ANALYZE_PATH, HttpAIProvider
-from tests.conftest import analyze_all
+from tests.conftest import analyze_all, login
 
 API = "/api/v1"
 
@@ -58,10 +58,11 @@ def test_auto_analysis_through_ai_service_format(client, chief):
     ]
     assert ai["details"] == {"specialists": ["pulmonologist"]}
 
-    # Решение врача с этим ответом: согласие считается, уверенности нет
+    # Решение лечащего врача с этим ответом: согласие считается, уверенности нет
+    treating = client.app.state.store.get_user(item["doctor"]["id"])
     r = client.post(
         f"{API}/studies/{item['id']}/decision",
-        headers=chief,
+        headers=login(client, treating.email),
         json={
             "chosen_types": ["specialist_consult"],
             "details": {"specialists": ["pulmonologist"]},

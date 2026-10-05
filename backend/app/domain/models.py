@@ -20,7 +20,6 @@ from app.domain.enums import (
     RecommendationType,
     Role,
     Sex,
-    SocialNetwork,
     StudyStatus,
     StudyType,
 )
@@ -39,14 +38,6 @@ class User:
     active: bool = True  # главврач может отключить доступ врача
 
 
-@dataclass(frozen=True, slots=True)
-class Social:
-    """Аккаунт пациента в соцсети или мессенджере."""
-
-    network: SocialNetwork
-    handle: str
-
-
 @dataclass(slots=True, kw_only=True)
 class Patient:
     id: str
@@ -56,7 +47,6 @@ class Patient:
     sex: Sex
     phone: str
     contact_email: str | None = None  # почта для уведомлений; нет — email входа
-    socials: tuple[Social, ...] = ()  # соцсети и мессенджеры, которые указал пациент
     # Каналы, в которые пациент разрешил уведомления (кабинет на сайте — всегда)
     notify_channels: frozenset[NotificationChannel] = frozenset(NotificationChannel)
 
@@ -75,9 +65,8 @@ class Study:
     status: StudyStatus
     performed_at: datetime
     created_at: datetime
-    # Раздел «Описание» DICOM SR (поля БФТ как есть) и заключение рентгенолога, если есть
+    # Описание из протокола рентгенолога: поля «Поле- значение» как есть (без заключения)
     sr_fields: tuple[SRField, ...] = ()
-    conclusion: str | None = None
     # Автоповтор при сбое AI: неудачных автоматических попыток подряд, когда следующая,
     # и остановлен ли он (после AI_MAX_AUTO_ATTEMPTS — только ручная отправка)
     ai_auto_failures: int = 0
@@ -86,8 +75,8 @@ class Study:
 
     @property
     def report_text(self) -> str:
-        """Протокол для AI в формате AI-команды: «Описание: …\nЗаключение: …»."""
-        return report_text(self.sr_fields, self.conclusion)
+        """Протокол для AI в формате AI-команды: «Описание: Поле: значение. …»."""
+        return report_text(self.sr_fields)
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +139,7 @@ class Delivery:
 
     at: datetime
     channel: NotificationChannel
-    target: str  # телефон, email или «Telegram @…»
+    target: str  # телефон или email
     attempt: int
     text: str = ""  # что ушло: короткое сообщение со ссылкой на сайт
     status: DeliveryStatus = DeliveryStatus.SIMULATED
@@ -166,7 +155,7 @@ class Notification:
     # Каналы, в которые ушло уведомление (все доступные контакты); в кабинете — всегда
     channels: tuple[NotificationChannel, ...]
     text: str  # подробный — в личном кабинете на сайте
-    short_text: str = ""  # короткий со ссылкой — в SMS / email / соцсети
+    short_text: str = ""  # короткий со ссылкой — в email (в SMS — ещё короче)
     status: NotificationStatus
     sent_at: datetime
     read_at: datetime | None = None

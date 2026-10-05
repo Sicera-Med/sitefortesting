@@ -12,7 +12,7 @@ export type RecommendationType =
   | "urgent_hospitalization"
   | "no_pathology";
 export type AISource = "mock" | "http" | "manual";
-export type NotificationChannel = "sms" | "email" | "social";
+export type NotificationChannel = "sms" | "email";
 export type NotificationStatus = "sent" | "read";
 export type PatientActionType = "booked" | "declined";
 export type AppointmentStatus = "scheduled" | "cancelled";
@@ -172,14 +172,14 @@ export interface Notification {
   decision_id: string;
   channels: NotificationChannel[]; // все доступные контакты пациента
   text: string; // подробный — на сайте
-  short_text: string; // короткий со ссылкой — в SMS / email / соцсети
+  short_text: string; // короткий со ссылкой — в email (SMS — ещё короче)
   status: NotificationStatus;
   sent_at: string;
   read_at: string | null;
   patient_action: PatientActionType | null;
   action_at: string | null;
   appointment_id: string | null;
-  // История отправок (имитация каналов) и напоминания: раз в неделю, до max_reminders раз
+  // История отправок и напоминания: раз в неделю, до max_reminders раз
   deliveries: Delivery[];
   reminders_sent: number;
   max_reminders: number;
@@ -189,7 +189,7 @@ export interface Notification {
 export interface Delivery {
   at: string;
   channel: NotificationChannel;
-  target: string; // телефон, email или «Telegram @…»
+  target: string; // телефон или email
   attempt: number; // 0 — первое уведомление, 1.. — напоминания
   text: string; // что ушло в канал
   status: DeliveryStatus;
@@ -198,13 +198,6 @@ export interface Delivery {
 
 /** pending — в очереди, sent — ушло через SMSPilot / SMTP, simulated — имитация. */
 export type DeliveryStatus = "pending" | "sent" | "failed" | "simulated";
-
-export type SocialNetwork = "telegram" | "vk" | "whatsapp" | "max";
-
-export interface Social {
-  network: SocialNetwork;
-  handle: string;
-}
 
 /** Исследование в кабинете пациента: статус и решение врача, без текста протокола. */
 export interface PatientStudy {
@@ -273,8 +266,7 @@ export interface StudyIn {
   patient_id: string;
   study_type: StudyType;
   body_region: string;
-  description: string; // раздел «Описание» DICOM SR: строки «Поле- значение»
-  conclusion?: string | null;
+  description: string; // описание из протокола: строки «Поле- значение»
   treating_doctor_id?: string | null;
 }
 
@@ -285,9 +277,8 @@ export interface StudyCard {
   body_region: string;
   performed_at: string;
   created_at: string;
-  // Протокол: раздел «Описание» DICOM SR (поля БФТ) и заключение; report_text — как уходит в AI
+  // Протокол: описание находок «поле → значение»; report_text — как уходит в AI
   sr_fields: { name: string; value: string }[];
-  conclusion: string | null;
   report_text: string;
   patient: PatientBrief;
   doctor: DoctorBrief;
@@ -367,7 +358,6 @@ export interface Account {
   birth_date: string | null;
   phone: string | null;
   contact_email: string | null; // почта для уведомлений; null — email входа
-  socials: Social[];
   notify_channels: NotificationChannel[];
   available_channels: NotificationChannel[]; // есть контакт для канала
 }
@@ -376,7 +366,6 @@ export interface AccountPatch {
   email?: string;
   phone?: string;
   contact_email?: string; // "" — уведомления на email входа
-  socials?: Social[]; // весь список целиком
   notify_channels?: NotificationChannel[];
 }
 

@@ -56,13 +56,15 @@ STAFF_ROLES = frozenset({Role.DOCTOR, Role.CHIEF, Role.MANAGER})
 
 
 def can_view_study(user: User, study: Study) -> bool:
-    # Врачи видят любые Study (чужие — read-only), главврач и менеджер — все, пациент — никакие
+    """Врач — только своих пациентов; главврач и менеджер — все; пациент — никакие."""
+    if user.role is Role.DOCTOR:
+        return is_treating_doctor(user, study)
     return user.role in STAFF_ROLES
 
 
 def is_responsible(user: User, study: Study) -> bool:
-    """Лечащий врач или главврач — тот, кто может решать по исследованию."""
-    return user.role is Role.CHIEF or is_treating_doctor(user, study)
+    """Решает по исследованию только лечащий врач (главврач смотрит и переназначает)."""
+    return is_treating_doctor(user, study)
 
 
 def can_analyze(user: User, study: Study) -> bool:
@@ -122,8 +124,6 @@ def available_channels(patient: Patient, user: User | None) -> tuple[Notificatio
         channels.append(NotificationChannel.SMS)
     if user is not None and user.email:
         channels.append(NotificationChannel.EMAIL)
-    if patient.socials:
-        channels.append(NotificationChannel.SOCIAL)
     return tuple(channels)
 
 

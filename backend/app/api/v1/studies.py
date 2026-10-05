@@ -21,7 +21,7 @@ from app.schemas.studies import (
 router = APIRouter(prefix="/studies", tags=["studies"])
 
 
-@router.post("", response_model=StudyCard, summary="Новое исследование из DICOM SR")
+@router.post("", response_model=StudyCard, summary="Новое исследование из протокола рентгенолога")
 async def create_study(body: StudyIn, user: DoctorUser, service: StudyServiceDep) -> StudyCard:
     return StudyCard.build(service.create(user, **body.model_dump()))
 
@@ -79,7 +79,7 @@ async def decide(
 @router.post(
     "/{study_id}/analyze",
     response_model=InferenceOut,
-    summary="Отправить в AI: при открытии карточки или после сбоя (лечащий врач, главврач)",
+    summary="Отправить в AI: при открытии карточки или после сбоя (лечащий врач)",
 )
 async def retry_ai(study_id: str, user: DoctorUser, service: StudyServiceDep) -> InferenceOut:
     return InferenceOut.build(await service.retry_ai(user, study_id))

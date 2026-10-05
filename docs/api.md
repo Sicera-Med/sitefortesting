@@ -15,7 +15,7 @@
 
 У каждого ответа есть заголовок `X-Request-ID`. Примеры запросов — [../examples/api.http](../examples/api.http).
 
-Роли: `doctor` — врач, `chief` — главврач, `manager` — менеджер, `patient` — пациент. «Лечащий» — лечащий врач этого исследования.
+Роли: `doctor` — врач, `chief` — главврач, `manager` — менеджер, `patient` — пациент. «Лечащий» — лечащий врач этого исследования. Врач видит только своих пациентов (чужое исследование — `403`); решения, отправку в AI и напоминания делает только лечащий врач, главврач — наблюдает и переназначает.
 
 ## Вход и профиль
 
@@ -24,21 +24,21 @@
 | POST | `/auth/login` | — | `{email, password}` → `{access_token, user}` |
 | GET | `/auth/me` | все | текущий пользователь |
 | GET | `/auth/demo-users` | — | демо-аккаунты для быстрого входа (не в `APP_ENV=prod`) |
-| GET / PATCH | `/account` | все | профиль; контакты (email, у пациента — телефон, email для уведомлений, соцсети, каналы) |
+| GET / PATCH | `/account` | все | профиль; контакты (email, у пациента — телефон, email для уведомлений, каналы SMS / email) |
 | POST | `/account/password` | все | смена пароля |
 
 ## Исследования (врач, главврач, менеджер)
 
 | Метод | Путь | Роли | Что делает |
 |---|---|---|---|
-| GET | `/studies` | doctor, chief, manager | очередь: `?scope=mine\|all`, `?status=…` |
-| POST | `/studies` | doctor, chief | новое исследование из DICOM SR: `{patient_id, study_type, body_region, description, conclusion?, performed_at?, treating_doctor_id?}` |
+| GET | `/studies` | doctor, chief, manager | очередь: врачу — только его пациенты, главврачу и менеджеру — все; `?status=…` |
+| POST | `/studies` | doctor, chief | новое исследование из протокола рентгенолога: `{patient_id, study_type, body_region, description, performed_at?, treating_doctor_id?}` |
 | GET | `/studies/patients` | doctor, chief, manager | пациенты для формы «Новое исследование» |
 | GET | `/studies/{id}` | doctor, chief, manager | карточка: протокол, последний ответ AI, решение, уведомление, записи, направления |
-| POST | `/studies/{id}/analyze` | лечащий, chief | отправить в AI; не чаще раза в 10 с (`429`) |
-| POST | `/studies/{id}/decision` | лечащий, chief | `{chosen_types, details, comment?}` → решение; уведомление пациенту уходит автоматически |
+| POST | `/studies/{id}/analyze` | лечащий | отправить в AI; не чаще раза в 10 с (`429`) |
+| POST | `/studies/{id}/decision` | лечащий | `{chosen_types, details, comment?}` → решение; уведомление пациенту уходит автоматически |
 | POST | `/studies/{id}/reassign` | chief | сменить лечащего врача до решения |
-| POST | `/studies/{id}/ai-result` | лечащий, chief | запасной путь: загрузить ответ AI вручную (JSON по контракту) |
+| POST | `/studies/{id}/ai-result` | лечащий | запасной путь: загрузить ответ AI вручную (JSON по контракту) |
 | GET | `/studies/{id}/history` | doctor, chief, manager | все ответы AI по исследованию |
 | GET | `/studies/{id}/audit` | doctor, chief, manager | таймлайн действий |
 | POST | `/ai/test` | doctor, chief, manager | прогнать текст через AI без сохранения (для AI-команды) |
@@ -52,8 +52,8 @@
 | GET | `/patients/me/studies` | patient | свои исследования и решения, без протокола |
 | POST | `/notifications/{id}/read` | patient (своё) | прочитано |
 | POST | `/notifications/{id}/decline` | patient (своё) | отказ от рекомендации — кейс закрывается |
-| POST | `/notifications/{id}/explain` | patient (своё) | объяснение заключения простым языком (AI, один раз) |
-| POST | `/notifications/{id}/remind` | лечащий, chief | «Напомнить сейчас»: следующее напоминание сразу, до трёх |
+| POST | `/notifications/{id}/explain` | patient (своё) | объяснение результата исследования простым языком (AI, один раз) |
+| POST | `/notifications/{id}/remind` | лечащий | «Напомнить сейчас»: следующее напоминание сразу, до трёх |
 
 ## Запись
 

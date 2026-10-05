@@ -117,9 +117,8 @@ class StudyService:
     ) -> list[StudyView]:
         if user.role not in rules.STAFF_ROLES:
             raise ForbiddenError("Нет доступа к исследованиям")
-        # Врач по умолчанию видит свою очередь; главврач и менеджер — всё
-        scope = scope or ("mine" if user.role is Role.DOCTOR else "all")
-        doctor_id = user.id if user.role is Role.DOCTOR and scope == "mine" else None
+        # Врач видит только своих пациентов (scope игнорируется); главврач и менеджер — всё
+        doctor_id = user.id if user.role is Role.DOCTOR else None
         studies = self.store.list_studies(doctor_id=doctor_id, statuses=statuses)
         return [self._view(user, s) for s in studies]
 
@@ -218,14 +217,14 @@ class StudyService:
         return await self._analyze(None, study, attempt=attempt, of=of)
 
     async def retry_ai(self, user: User, study_id: str) -> AIInference:
-        """Ручная отправка в AI (лечащий врач или главврач): новое исследование при
+        """Ручная отправка в AI (лечащий врач): новое исследование при
         выключенной автоотправке или повтор после сбоя.
 
         Автоповтор не трогает: если он остановлен — остаётся остановленным.
         """
         study = self._get(user, study_id)
         if not rules.can_analyze(user, study):
-            raise ForbiddenError("Отправить в AI может лечащий врач или главврач")
+            raise ForbiddenError("Отправить в AI может лечащий врач")
         manual_new = study.status is StudyStatus.NEW and not self.auto_analyze
         if study.status is not StudyStatus.AI_FAILED and not manual_new:
             raise InvalidTransitionError(
@@ -307,7 +306,6 @@ class StudyService:
         study_type: StudyType,
         body_region: str,
         description: str,
-        conclusion: str | None,
         performed_at: datetime | None = None,
         treating_doctor_id: str | None = None,
     ) -> StudyView:
@@ -329,10 +327,9 @@ class StudyService:
         doctor = self.store.get_user(doctor_id) if doctor_id else None
         if doctor is None or doctor.role is not Role.DOCTOR or not doctor.active:
             raise InvalidInputError("Укажите лечащего врача", details={"doctor_id": doctor_id})
-        fields, parsed_conclusion = parse_sr(description)
-        conclusion = (conclusion or "").strip() or parsed_conclusion
-        if not fields and not conclusion:
-            raise InvalidInputError("Протокол пустой: вставьте описание DICOM SR или заключение")
+        fields = parse_sr(description)
+        if not fields:
+            raise InvalidInputError("Протокол пустой: вставьте описание находок")
         now = utcnow()
         study = self.store.add_study(
             Study(
@@ -345,7 +342,6 @@ class StudyService:
                 performed_at=performed_at or now,
                 created_at=now,
                 sr_fields=tuple(fields),
-                conclusion=conclusion,
             )
         )
         audit.record(self.store, user, "study.created", target_id=study.id, fields=len(fields))
@@ -392,7 +388,7 @@ class StudyService:
     ) -> Decision:
         study = self._get(user, study_id)
         if not rules.can_decide(user, study):
-            raise ForbiddenError("Решение принимает лечащий врач или главврач")
+            raise ForbiddenError("Решение принимает лечащий врач")
         if self.store.decision_for_study(study.id) is not None:
             raise ConflictError("Решение по исследованию уже принято")
         if not rules.can_transition(study.status, StudyStatus.DECIDED):

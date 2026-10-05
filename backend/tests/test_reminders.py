@@ -1,6 +1,6 @@
 """Уведомления: история отправок по всем контактам и напоминания раз в неделю, до 3 раз."""
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from tests.conftest import login
 
@@ -15,20 +15,16 @@ def _notification(client, nid):
     return client.app.state.store.get_notification(nid)
 
 
-def test_seed_history_and_reminder(client, kuznetsova):
+def test_seed_has_no_fake_history_and_nothing_sent_on_start(client):
     sokolov = login(client, "sokolov@patient.demo")
     items = client.get(f"{API}/patients/me/notifications", headers=sokolov).json()
-    # КТ ГМ у Кима — уведомление 9 дней назад, записи нет: одно напоминание уже ушло
-    spine = next(i for i in items if i["study"]["body_region"] == "head")["notification"]
-    assert spine["reminders_sent"] == 1 and spine["max_reminders"] == 3
-    assert spine["next_reminder_at"] is not None
-    # SMS + email + две соцсети, дважды (уведомление и напоминание)
-    assert len(spine["deliveries"]) == 8
-    targets = {d["target"] for d in spine["deliveries"]}
-    assert "Telegram @m_sokolov" in targets and "WhatsApp +7 900 100-00-05" in targets
-
-    item = client.get(f"{API}/patients/me/notifications", headers=kuznetsova).json()[0]
-    assert {d["attempt"] for d in item["notification"]["deliveries"]} == {0}
+    # КТ ГМ у Кима — уведомление 9 дней назад, записи нет. Демо-уведомление никуда
+    # не отправлялось: истории нет, первое напоминание — через неделю от запуска
+    head = next(i for i in items if i["study"]["body_region"] == "head")["notification"]
+    assert head["deliveries"] == [] and head["reminders_sent"] == 0
+    due = datetime.fromisoformat(head["next_reminder_at"])
+    assert due > datetime.now(UTC) + timedelta(days=6)
+    assert _remind(client) == 0  # при старте ничего не уходит
 
 
 def test_reminders_weekly_up_to_three(client, petrov):
@@ -45,7 +41,7 @@ def test_reminders_weekly_up_to_three(client, petrov):
     assert n.next_reminder_at is None  # лимит 3 исчерпан
     assert _remind(client) == 0
     view = client.get(f"{API}/patients/me/notifications", headers=kuz).json()[0]
-    assert {d["attempt"] for d in view["notification"]["deliveries"]} == {0, 1, 2, 3}
+    assert {d["attempt"] for d in view["notification"]["deliveries"]} == {1, 2, 3}
     reminder = next(
         d
         for d in view["notification"]["deliveries"]

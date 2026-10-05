@@ -280,7 +280,7 @@ def test_research_without_notification_is_rejected(client, kuznetsova):
 
 
 def test_decision_notifies_all_contacts(client, sidorova):
-    # Волков: телефон и email, соцсети нет → SMS + email
+    # Волков: телефон и email → SMS + email
     study = next(
         s
         for s in client.get(f"{API}/studies", params={"status": "new"}, headers=sidorova).json()
@@ -300,9 +300,11 @@ def test_decision_notifies_all_contacts(client, sidorova):
     assert "Онколог" in card["notification"]["text"]
 
 
-def test_seed_notification_uses_social_when_present(client, kuznetsova):
-    item = _my_notification(client, kuznetsova)  # у Кузнецовой указан Telegram
-    assert item["notification"]["channels"] == ["sms", "email", "social"]
+def test_seed_notification_has_no_fake_history(client, kuznetsova):
+    n = _my_notification(client, kuznetsova)["notification"]
+    assert n["channels"] == ["sms", "email"]
+    # Демо-уведомление на самом деле никуда не отправлялось — истории отправок нет
+    assert n["deliveries"] == [] and n["reminders_sent"] == 0
 
 
 def test_manual_notify_endpoint_removed(client, petrov):

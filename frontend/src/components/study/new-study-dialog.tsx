@@ -44,7 +44,8 @@ function previewFields(text: string): { name: string; value: string }[] {
   const out: { name: string; value: string }[] = [];
   for (const raw of text.split("\n")) {
     const line = raw.trim().replace(/^[•*·\-–—]\s+/, "");
-    if (!line || /^описание:?$/i.test(line) || /^заключение/i.test(line)) continue;
+    if (/^заключение/i.test(line)) break; // заключение рентгенолога в систему не берём
+    if (!line || /^описание:?$/i.test(line)) continue;
     const dash = /\s*[-—–]\s+/.exec(line);
     const colon = line.indexOf(":");
     const cuts = [
@@ -85,7 +86,6 @@ function NewStudyDialog({ onClose }: { onClose: () => void }) {
   const [kind, setKind] = useState(KINDS[0].key);
   const [doctorId, setDoctorId] = useState("");
   const [description, setDescription] = useState("");
-  const [conclusion, setConclusion] = useState("");
   const fields = previewFields(description);
 
   function submit(e: React.FormEvent) {
@@ -97,7 +97,6 @@ function NewStudyDialog({ onClose }: { onClose: () => void }) {
         study_type: k.study_type,
         body_region: k.body_region,
         description,
-        conclusion: conclusion.trim() || null,
         treating_doctor_id: isChief ? doctorId : null,
       },
       { onSuccess: (study) => router.push(`/studies/${study.id}`) },
@@ -112,8 +111,8 @@ function NewStudyDialog({ onClose }: { onClose: () => void }) {
           <DialogHeader>
             <DialogTitle>Новое исследование</DialogTitle>
             <DialogDescription>
-              Вставьте раздел «Описание» из DICOM SR — строки «Поле- значение», как на сайте
-              «Третьего мнения». AI разберёт поля по шаблону БФТ.
+              Вставьте описание из протокола рентгенолога: каждая находка с новой строки, например
+              «Грудная аорта- диаметр 40 мм».
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -175,7 +174,7 @@ function NewStudyDialog({ onClose }: { onClose: () => void }) {
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-1.5">
-              <Label htmlFor="description">Описание (DICOM SR)</Label>
+              <Label htmlFor="description">Описание из протокола</Label>
               <Textarea
                 id="description"
                 className="min-h-56 font-mono text-xs"
@@ -185,7 +184,7 @@ function NewStudyDialog({ onClose }: { onClose: () => void }) {
               />
             </div>
             <div className="grid content-start gap-1.5">
-              <Label>Разобранные поля ({fields.length})</Label>
+              <Label>Как система прочитала протокол ({fields.length})</Label>
               <div className="max-h-56 min-h-56 overflow-y-auto rounded-md border bg-background p-2 text-xs">
                 {fields.length ? (
                   <dl className="grid grid-cols-[minmax(6rem,10rem)_1fr] gap-x-3 gap-y-1">
@@ -202,14 +201,6 @@ function NewStudyDialog({ onClose }: { onClose: () => void }) {
               </div>
             </div>
           </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="conclusion">Заключение рентгенолога (необязательно)</Label>
-            <Textarea
-              id="conclusion"
-              value={conclusion}
-              onChange={(e) => setConclusion(e.target.value)}
-            />
-          </div>
           {create.isError && (
             <p className="text-sm text-destructive">{errorMessage(create.error)}</p>
           )}
@@ -217,10 +208,7 @@ function NewStudyDialog({ onClose }: { onClose: () => void }) {
             <Button type="button" variant="ghost" onClick={onClose}>
               Отмена
             </Button>
-            <Button
-              type="submit"
-              disabled={create.isPending || (!fields.length && !conclusion.trim())}
-            >
+            <Button type="submit" disabled={create.isPending || !fields.length}>
               {create.isPending && <Loader2 className="animate-spin" />}
               Создать и отправить в AI
             </Button>

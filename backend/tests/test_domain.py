@@ -75,14 +75,20 @@ def test_treating_doctor_can_decide_others_cannot():
     study = _study(doctor_id="usr_1")
     assert rules.can_decide(_user(Role.DOCTOR, "usr_1"), study)
     assert not rules.can_decide(_user(Role.DOCTOR, "usr_2"), study)
-    assert rules.can_decide(_user(Role.CHIEF, "usr_9"), study)
+    assert not rules.can_decide(_user(Role.CHIEF, "usr_9"), study)  # главврач не решает
     assert not rules.can_decide(_user(Role.MANAGER, "usr_1"), study)
 
 
-def test_chief_can_analyze_but_patient_cannot_view():
-    study = _study()
-    assert rules.can_analyze(_user(Role.CHIEF, "usr_9"), study)
+def test_who_views_and_analyzes():
+    study = _study(doctor_id="usr_1")
+    assert rules.can_analyze(_user(Role.DOCTOR, "usr_1"), study)
+    assert not rules.can_analyze(_user(Role.CHIEF, "usr_9"), study)
     assert not rules.can_analyze(_user(Role.DOCTOR, "usr_2"), study)
+    # Врач видит только своих пациентов; главврач и менеджер — всех; пациент — никого
+    assert rules.can_view_study(_user(Role.DOCTOR, "usr_1"), study)
+    assert not rules.can_view_study(_user(Role.DOCTOR, "usr_2"), study)
+    assert rules.can_view_study(_user(Role.CHIEF, "usr_9"), study)
+    assert rules.can_view_study(_user(Role.MANAGER, "usr_8"), study)
     assert not rules.can_view_study(_user(Role.PATIENT, "usr_3"), study)
 
 
@@ -92,8 +98,7 @@ def test_can_act_flag():
     assert not rules.can_act(doctor, _study(S.COMPLETED))
     assert not rules.can_act(other, _study(S.AI_READY))
     chief = _user(Role.CHIEF, "usr_9")
-    assert rules.can_act(chief, _study(S.NEW))
-    assert not rules.can_act(chief, _study(S.COMPLETED))
+    assert not rules.can_act(chief, _study(S.NEW))
     assert not rules.can_act(_user(Role.MANAGER, "usr_8"), _study(S.NEW))
 
 

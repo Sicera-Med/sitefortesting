@@ -207,7 +207,7 @@ function Funnel({ data }: { data: Dashboard }) {
   const steps = row
     ? [
         { label: "Уведомление отправлено", n: row.sent },
-        { label: "Прочитали", n: row.read },
+        { label: "Прочитали на сайте", n: row.read },
         { label: "Записались хотя бы по одному направлению", n: row.booked_any },
         { label: "Записались по всем направлениям", n: row.booked_all },
       ]
@@ -215,7 +215,7 @@ function Funnel({ data }: { data: Dashboard }) {
   return (
     <Section
       title="Что делают пациенты после уведомления"
-      note="Доля — от отправленных уведомлений, по которым нужно записаться"
+      note="Доля — от отправленных уведомлений, по которым нужно записаться. «Прочитали на сайте» — пациент открыл рекомендацию в личном кабинете (открытие SMS и писем не отслеживается)"
     >
       <Tabs value={scope} onValueChange={(v) => setScope(v as string)}>
         <TabsList className="flex-wrap">

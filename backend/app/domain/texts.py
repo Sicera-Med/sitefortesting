@@ -5,7 +5,7 @@
 (блок «Что значит ваше заключение», /ai/v1/explain).
 
 - на сайте — подробный текст: что решил врач и что делать по каждому направлению;
-- email / соцсеть — коротко, без медицинских подробностей, со ссылкой на сайт;
+- email — коротко, без медицинских подробностей, со ссылкой на сайт;
 - SMS — ещё короче: ни имени, ни названия исследования (SMS может прочитать посторонний,
   а кириллица идёт сегментами по 70 знаков).
 """
@@ -15,8 +15,6 @@ from typing import Any
 
 from app.domain.dictionaries import BODY_REGIONS, RESEARCH_TYPES, SPECIALISTS, STUDY_TYPES
 from app.domain.enums import RecommendationType
-
-SOCIAL_LABELS = {"telegram": "Telegram", "vk": "VK", "whatsapp": "WhatsApp", "max": "MAX"}
 
 R = RecommendationType
 
@@ -88,7 +86,7 @@ def notification_text(
 
 
 def short_text(patient_name: str, study: str, url: str, *, urgent: bool = False) -> str:
-    """SMS / email / соцсеть: только факт готовности и ссылка, без медицинских данных."""
+    """Email: только факт готовности и ссылка, без медицинских данных."""
     if urgent:
         return (
             f"{_greeting(patient_name)} СРОЧНО: по результату исследования «{study}» врач "

@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Response, status
 
 from app.api.deps import AccountServiceDep, CurrentUser
-from app.domain.models import Social
 from app.schemas.account import AccountOut, AccountPatch, PasswordIn
 
 router = APIRouter(prefix="/account", tags=["account"])
@@ -17,8 +16,6 @@ async def update_account(
     body: AccountPatch, user: CurrentUser, service: AccountServiceDep
 ) -> AccountOut:
     data = body.model_dump(exclude_unset=True)
-    if body.socials is not None:
-        data["socials"] = [Social(s.network, s.handle) for s in body.socials]
     return AccountOut.build(service.update(user, **data))
 
 

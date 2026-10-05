@@ -6,7 +6,7 @@ import { useEffect, useRef } from "react";
 import { useExplain } from "@/lib/api/hooks";
 import type { PatientNotification } from "@/lib/api/types";
 
-/** «Что значит ваше заключение» — B2C AI-команды; запрашивается один раз при открытии. */
+/** «Что значит результат исследования» — B2C AI-команды; запрашивается один раз при открытии. */
 export function Explanation({ item }: { item: PatientNotification }) {
   const explain = useExplain();
   const asked = useRef(false);
@@ -23,7 +23,7 @@ export function Explanation({ item }: { item: PatientNotification }) {
   return (
     <section className="grid gap-2 rounded-2xl border bg-card p-4">
       <h3 className="flex items-center gap-2 font-medium">
-        <MessageCircleQuestion className="size-5 text-primary" /> Что значит ваше заключение
+        <MessageCircleQuestion className="size-5 text-primary" /> Что значит результат исследования
       </h3>
       {ready ? (
         <>
@@ -39,8 +39,8 @@ export function Explanation({ item }: { item: PatientNotification }) {
             </dl>
           )}
           <p className="text-xs text-muted-foreground">
-            Объяснение подготовил AI-ассистент по тексту заключения. Решение о лечении принимает
-            врач.
+            Объяснение подготовил AI-ассистент по протоколу исследования. Решение о лечении
+            принимает врач.
           </p>
         </>
       ) : explain.isError ? (

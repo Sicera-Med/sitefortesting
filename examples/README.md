@@ -5,7 +5,7 @@
 
 | Файл | Что это |
 |---|---|
-| `sr/*.txt` | Протоколы DICOM SR («Поле- значение» + «Заключение:») — вставьте в форму «Новое исследование» у врача. КТ ОГК: `ct_chest_aorta`, `ct_chest_nodule`; РГ ОГК: `xray_chest_pneumonia`, `xray_chest_normal`; `mammography`; КТ ГМ: `ct_head` |
+| `sr/*.txt` | Протоколы рентгенолога — описание находок «Поле- значение» — вставьте в форму «Новое исследование» у врача. КТ ОГК: `ct_chest_aorta`, `ct_chest_nodule`; РГ ОГК: `xray_chest_pneumonia`, `xray_chest_normal`; `mammography`; КТ ГМ: `ct_head` |
 | `ai_request.json` | Запрос backend → AI-сервис (`POST /ai/v1/analyze`) для `sr/ct_chest_aorta.txt` |
 | `ai_response.json` | Пример **формата** ответа AI-сервиса (собран вручную, не реальный ответ модели) |
 | `api.http` | Сценарий через REST API: вход → новое исследование → AI → решение врача |

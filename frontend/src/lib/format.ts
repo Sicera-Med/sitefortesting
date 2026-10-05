@@ -12,7 +12,6 @@ import type {
   NotificationChannel,
   RecommendationDetails,
   RecommendationType,
-  SocialNetwork,
   StudyStatus,
 } from "./api/types";
 
@@ -33,19 +32,11 @@ export const RECOMMENDATION_LABELS: Record<RecommendationType, string> = {
   no_pathology: "Патологии не выявлено",
 };
 
-export const SOCIAL_LABELS: Record<SocialNetwork, string> = {
-  telegram: "Telegram",
-  vk: "VK",
-  whatsapp: "WhatsApp",
-  max: "MAX",
-};
-
 export const RECOMMENDATION_TYPES = Object.keys(RECOMMENDATION_LABELS) as RecommendationType[];
 
 export const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   sms: "SMS",
   email: "Email",
-  social: "Соцсеть",
 };
 
 export const ROLE_LABELS = {

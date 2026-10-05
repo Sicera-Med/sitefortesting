@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Check, KeyRound, Loader2, Plus, UserRound, X } from "lucide-react";
+import { Bell, Check, KeyRound, Loader2, UserRound } from "lucide-react";
 import { useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
@@ -11,23 +11,15 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { errorMessage } from "@/lib/api/client";
 import { useAccount, useChangePassword, useUpdateAccount } from "@/lib/api/hooks";
-import type { Account, NotificationChannel, Social, SocialNetwork } from "@/lib/api/types";
-import { CHANNEL_LABELS, fmtDate, ROLE_LABELS, SOCIAL_LABELS, useLabels } from "@/lib/format";
+import type { Account, NotificationChannel } from "@/lib/api/types";
+import { CHANNEL_LABELS, fmtDate, ROLE_LABELS, useLabels } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-const CHANNELS: NotificationChannel[] = ["sms", "email", "social"];
-const NETWORKS: SocialNetwork[] = ["telegram", "vk", "whatsapp", "max"];
-const NETWORK_HINTS: Record<SocialNetwork, string> = {
-  telegram: "@username",
-  vk: "vk.com/username",
-  whatsapp: "+7 900 000-00-00",
-  max: "+7 900 000-00-00",
-};
+const CHANNELS: NotificationChannel[] = ["sms", "email"];
 // Какой контакт нужен для канала
 const CHANNEL_CONTACT: Record<NotificationChannel, string> = {
   sms: "нужен телефон",
   email: "нужен email",
-  social: "добавьте соцсеть в контактах",
 };
 
 export default function AccountPage() {
@@ -96,27 +88,17 @@ function Contacts({ account }: { account: Account }) {
   const [email, setEmail] = useState(account.email);
   const [phone, setPhone] = useState(account.phone ?? "");
   const [contactEmail, setContactEmail] = useState(account.contact_email ?? "");
-  const [socials, setSocials] = useState<Social[]>(account.socials);
   const dirty =
     email !== account.email ||
     (isPatient &&
-      (phone !== (account.phone ?? "") ||
-        contactEmail !== (account.contact_email ?? "") ||
-        JSON.stringify(socials) !== JSON.stringify(account.socials)));
+      (phone !== (account.phone ?? "") || contactEmail !== (account.contact_email ?? "")));
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    update.mutate(isPatient ? { email, phone, contact_email: contactEmail, socials } : { email }, {
-      // Сервер чистит пустые и повторы — показываем то, что сохранилось
-      onSuccess: (a) => {
-        setSocials(a.socials);
-        setContactEmail(a.contact_email ?? "");
-      },
+    update.mutate(isPatient ? { email, phone, contact_email: contactEmail } : { email }, {
+      // Сервер нормализует email — показываем то, что сохранилось
+      onSuccess: (a) => setContactEmail(a.contact_email ?? ""),
     });
-  }
-
-  function setSocial(i: number, patch: Partial<Social>) {
-    setSocials((cur) => cur.map((s, k) => (k === i ? { ...s, ...patch } : s)));
   }
 
   return (
@@ -155,54 +137,6 @@ function Contacts({ account }: { account: Account }) {
                   onChange={(e) => setContactEmail(e.target.value)}
                 />
               </Field>
-              <div className="grid gap-1.5">
-                <Label>Соцсети и мессенджеры</Label>
-                {socials.length === 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    Не указаны — уведомления придут по SMS и email.
-                  </p>
-                )}
-                {socials.map((s, i) => (
-                  <div key={i} className="flex gap-2">
-                    <select
-                      aria-label="Сеть"
-                      className="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
-                      value={s.network}
-                      onChange={(e) => setSocial(i, { network: e.target.value as SocialNetwork })}
-                    >
-                      {NETWORKS.map((n) => (
-                        <option key={n} value={n}>
-                          {SOCIAL_LABELS[n]}
-                        </option>
-                      ))}
-                    </select>
-                    <Input
-                      aria-label="Аккаунт или номер"
-                      placeholder={NETWORK_HINTS[s.network]}
-                      value={s.handle}
-                      onChange={(e) => setSocial(i, { handle: e.target.value })}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      title="Удалить"
-                      onClick={() => setSocials((cur) => cur.filter((_, k) => k !== i))}
-                    >
-                      <X />
-                    </Button>
-                  </div>
-                ))}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="justify-self-start"
-                  onClick={() => setSocials((cur) => [...cur, { network: "telegram", handle: "" }])}
-                >
-                  <Plus /> Добавить соцсеть
-                </Button>
-              </div>
             </>
           )}
           <Footer pending={update.isPending} disabled={!dirty} saved={update.isSuccess && !dirty}>
@@ -253,11 +187,7 @@ function Channels({ account }: { account: Account }) {
                 disabled={!available || update.isPending}
                 onChange={() => toggle(c)}
               />
-              <span className="flex-1">
-                {c === "social" && account.socials.length
-                  ? `Соцсети: ${[...new Set(account.socials.map((x) => SOCIAL_LABELS[x.network]))].join(", ")}`
-                  : CHANNEL_LABELS[c]}
-              </span>
+              <span className="flex-1">{CHANNEL_LABELS[c]}</span>
               {!available && (
                 <span className="text-xs text-muted-foreground">{CHANNEL_CONTACT[c]}</span>
               )}

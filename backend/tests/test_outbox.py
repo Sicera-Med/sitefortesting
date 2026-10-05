@@ -28,7 +28,10 @@ def _settings(**kw) -> Settings:
 
 
 def test_plan_real_or_simulated():
-    assert channels.plan(_settings(), C.SMS) == ("simulated", None)
+    assert channels.plan(_settings(), C.SMS) == (
+        "simulated",
+        "рассылка выключена (NOTIFY_REAL=false)",
+    )
     real = {"NOTIFY_REAL": True}
     assert channels.plan(_settings(**real), C.SMS) == (
         "simulated",
@@ -40,7 +43,6 @@ def test_plan_real_or_simulated():
     )
     smtp = {"SMTP_USER": "a@yandex.ru", "SMTP_PASSWORD": "p"}
     assert channels.plan(_settings(**real, **smtp), C.EMAIL) == ("pending", None)
-    assert channels.plan(_settings(**real, **smtp), C.SOCIAL) == ("simulated", None)
 
 
 @pytest.mark.parametrize(
@@ -138,7 +140,7 @@ def test_remind_now_goes_through_outbox(client, petrov, monkeypatch):
     assert n["reminders_sent"] == 1
     new = [d for d in n["deliveries"] if d["attempt"] == 1]
     status = {d["channel"]: d["status"] for d in new}
-    assert status == {"sms": "pending", "email": "pending", "social": "simulated"}
+    assert status == {"sms": "pending", "email": "pending"}
     assert next(d for d in new if d["channel"] == "sms")["text"].startswith(
         "Третье мнение: напоминаем"
     )
@@ -167,20 +169,21 @@ def test_remind_now_rules(client, petrov, sidorova, chief, kuznetsova, monkeypat
     url = f"{API}/notifications/{nid}/remind"
     assert client.post(url, headers=kuznetsova).status_code == 403  # пациент
     assert client.post(url, headers=sidorova).status_code == 403  # не лечащий врач
+    assert client.post(url, headers=chief).status_code == 403  # главврач не напоминает
 
     monkeypatch.setenv("NOTIFY_REMIND_COOLDOWN_S", "10")
     get_settings.cache_clear()
     n = client.app.state.store.get_notification(nid)
     n.deliveries.clear()  # история seed старая — проверяем только свой лимит частоты
     assert client.post(url, headers=petrov).status_code == 200
-    r = client.post(url, headers=chief)
+    r = client.post(url, headers=petrov)
     assert r.status_code == 429 and r.json()["error"]["details"]["retry_after_s"] == 10
 
     monkeypatch.setenv("NOTIFY_REMIND_COOLDOWN_S", "0")
     get_settings.cache_clear()
     for _ in range(2):
-        assert client.post(url, headers=chief).status_code == 200
-    r = client.post(url, headers=chief)
+        assert client.post(url, headers=petrov).status_code == 200
+    r = client.post(url, headers=petrov)
     assert r.status_code == 409 and "3" in r.json()["error"]["message"]
     assert n.next_reminder_at is None
     audit = [e for e in client.app.state.store.audit if e.action == "notification.reminder"]
@@ -220,6 +223,5 @@ def test_seed_demo_contacts():
     seed_demo(store, contact_phone="+7 999 000-00-01", contact_email="colleague@example.ru")
     assert {p.phone for p in store.patients.values()} == {"+7 999 000-00-01"}
     assert {p.contact_email for p in store.patients.values()} == {"colleague@example.ru"}
-    # История seed — только имитация, при старте ничего не отправляется
-    statuses = {d.status for n in store.list_notifications() for d in n.deliveries}
-    assert statuses == {"simulated"}
+    # Истории отправок у демо-уведомлений нет — при старте ничего не отправляется
+    assert all(not n.deliveries for n in store.list_notifications())

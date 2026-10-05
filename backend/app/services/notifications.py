@@ -32,7 +32,6 @@ from app.domain.models import (
     User,
 )
 from app.domain.texts import (
-    SOCIAL_LABELS,
     notification_text,
     reminder_text,
     short_text,
@@ -49,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class OutgoingText:
-    """Что уходит в каналы: email / соцсеть — коротко со ссылкой, SMS — ещё короче."""
+    """Что уходит в каналы: email — коротко со ссылкой, SMS — ещё короче."""
 
     message: str
     sms: str
@@ -150,7 +149,7 @@ class NotificationService:
             raise NotFoundError("Уведомление не найдено")
         study = self.store.get_study(notification.study_id)
         if not rules.is_responsible(user, study):
-            raise ForbiddenError("Напомнить может лечащий врач или главврач")
+            raise ForbiddenError("Напомнить может лечащий врач")
         decision = self.store.get_decision(notification.decision_id)
         appointments = self.store.list_appointments(notification_id=notification.id)
         if not rules.needs_reminder(notification, decision, appointments):
@@ -265,7 +264,7 @@ class NotificationService:
 
 
 def notification_url(notification_id: str) -> str:
-    """Ссылка из SMS / email / соцсети — на карточку рекомендации в кабинете."""
+    """Ссылка из SMS / email — на карточку рекомендации в кабинете."""
     return f"{get_settings().SITE_URL.rstrip('/')}/patient#n-{notification_id}"
 
 
@@ -338,11 +337,6 @@ def delivery_targets(store: Store, patient: Patient) -> list[tuple[NotificationC
                 targets.append((channel, patient.phone))
             case NotificationChannel.EMAIL:
                 targets.append((channel, patient.contact_email or user.email))
-            case NotificationChannel.SOCIAL:
-                targets += [
-                    (channel, f"{SOCIAL_LABELS.get(s.network, s.network)} {s.handle}")
-                    for s in patient.socials
-                ]
     return targets
 
 

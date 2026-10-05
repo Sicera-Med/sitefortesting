@@ -1,6 +1,6 @@
 "use client";
 
-import { BellRing, Check, Clock, Mail, MessageCircle, MessageSquare, X } from "lucide-react";
+import { Ban, BellRing, Check, Clock, Mail, MessageSquare, X } from "lucide-react";
 
 import type { Delivery, DeliveryStatus, Notification, NotificationChannel } from "@/lib/api/types";
 import { fmtDateTime } from "@/lib/format";
@@ -9,14 +9,14 @@ import { cn } from "@/lib/utils";
 const CHANNEL_ICONS: Record<NotificationChannel, typeof Mail> = {
   sms: MessageSquare,
   email: Mail,
-  social: MessageCircle,
 };
 
 const STATUS: Record<DeliveryStatus, { label: string; icon: typeof Check; className: string }> = {
   sent: { label: "отправлено", icon: Check, className: "text-emerald-700" },
   pending: { label: "в очереди", icon: Clock, className: "text-amber-700" },
   failed: { label: "ошибка", icon: X, className: "text-red-700" },
-  simulated: { label: "имитация", icon: Check, className: "text-muted-foreground" },
+  // Рассылка выключена (NOTIFY_REAL=false) или канал не настроен — причина в detail
+  simulated: { label: "не отправлено", icon: Ban, className: "text-muted-foreground" },
 };
 
 /**

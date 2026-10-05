@@ -29,6 +29,8 @@ export function NotifyPanel({ study }: { study: StudyCard }) {
   if (!n) return null;
   const urgent = study.decision?.chosen_types.includes("urgent_hospitalization");
   const sms = n.deliveries.find((d) => d.attempt === 0 && d.channel === "sms")?.text;
+  // Каналы — по настоящим отправкам этого уведомления (у демо-данных их нет)
+  const sentTo = [...new Set(n.deliveries.filter((d) => d.attempt === 0).map((d) => d.channel))];
   // Как rules.needs_reminder на backend: есть незакрытые направления, пациент не отказался
   const canRemind =
     study.can_act &&
@@ -45,8 +47,8 @@ export function NotifyPanel({ study }: { study: StudyCard }) {
       </CardHeader>
       <CardContent className="grid gap-4 text-sm">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted-foreground">Отправлено {fmtDateTime(n.sent_at)}:</span>
-          {n.channels.map((c) => (
+          <span className="text-muted-foreground">Уведомление {fmtDateTime(n.sent_at)}:</span>
+          {sentTo.map((c) => (
             <Badge key={c} variant="outline">
               {CHANNEL_LABELS[c]}
             </Badge>
@@ -64,7 +66,7 @@ export function NotifyPanel({ study }: { study: StudyCard }) {
         </div>
         <div className="grid gap-1">
           <span className="text-xs font-medium text-muted-foreground">
-            В email и соцсети — коротко, со ссылкой:
+            В email — коротко, со ссылкой:
           </span>
           <p className="rounded-xl bg-background p-3">{n.short_text}</p>
         </div>
@@ -76,15 +78,22 @@ export function NotifyPanel({ study }: { study: StudyCard }) {
             <p className="rounded-xl bg-background p-3">{sms}</p>
           </div>
         )}
-        <details className="group">
-          <summary className="cursor-pointer list-none font-medium text-primary">
-            История отправок и напоминания
-            {n.reminders_sent > 0 && ` (напоминаний: ${n.reminders_sent})`}
-          </summary>
-          <div className="mt-3">
-            <NotificationHistory notification={n} staff />
-          </div>
-        </details>
+        {n.deliveries.length > 0 ? (
+          <details className="group">
+            <summary className="cursor-pointer list-none font-medium text-primary">
+              История отправок и напоминания
+              {n.reminders_sent > 0 && ` (напоминаний: ${n.reminders_sent})`}
+            </summary>
+            <div className="mt-3">
+              <NotificationHistory notification={n} staff />
+            </div>
+          </details>
+        ) : (
+          <p className="text-muted-foreground">
+            По SMS и email не отправлялось — уведомление в личном кабинете
+            {n.next_reminder_at && `; напоминание — ${fmtDateTime(n.next_reminder_at)}`}
+          </p>
+        )}
         {canRemind && (
           <div className="flex flex-wrap items-center gap-3">
             <Button

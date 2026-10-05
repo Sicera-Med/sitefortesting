@@ -75,7 +75,7 @@ function StudyView() {
           {user?.role === "chief" && ANALYZABLE.includes(study.status) && (
             <ReassignControl study={study} />
           )}
-          {!study.can_act && user?.role !== "chief" && (
+          {!study.can_act && user?.role !== "doctor" && (
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <Lock className="size-3" /> Лечащий врач: {study.doctor.full_name}
             </span>
@@ -85,7 +85,7 @@ function StudyView() {
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[1fr_1fr]">
-        {/* Слева — рекомендация AI и заключение, справа — что делает врач */}
+        {/* Слева — рекомендация AI и протокол, справа — что делает врач */}
         <div className="grid gap-4">
           <AIPanel study={study} />
           <SRProtocol study={study} />
@@ -129,12 +129,15 @@ function ReassignControl({ study }: { study: StudyCard }) {
   );
 }
 
-/** Протокол как он пришёл: раздел «Описание» DICOM SR (поля БФТ) и заключение рентгенолога. */
+/** Протокол как он пришёл: описание находок рентгенолога «поле → значение». */
 function SRProtocol({ study }: { study: StudyCard }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Протокол (DICOM SR)</CardTitle>
+        <CardTitle>Протокол исследования</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Что описал рентгенолог — по этим данным AI построил рекомендацию
+        </p>
       </CardHeader>
       <CardContent className="grid gap-4 text-sm">
         {study.sr_fields.length > 0 ? (
@@ -147,12 +150,8 @@ function SRProtocol({ study }: { study: StudyCard }) {
             ))}
           </dl>
         ) : (
-          <p className="text-muted-foreground">Описания в протоколе нет — только заключение.</p>
+          <p className="text-muted-foreground">Описания в протоколе нет.</p>
         )}
-        <div className="rounded-xl bg-background p-3">
-          <div className="text-xs font-medium text-muted-foreground">Заключение рентгенолога</div>
-          <p className="mt-1">{study.conclusion ?? "Заключения в протоколе нет"}</p>
-        </div>
       </CardContent>
     </Card>
   );

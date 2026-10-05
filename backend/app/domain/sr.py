@@ -1,7 +1,7 @@
 """Протокол исследования — раздел «Описание» DICOM SR по шаблону БФТ (как на thirdopinion.ai).
 
 Строки «Поле- значение» хранятся как есть; для AI собираются в текст в формате AI-команды
-(`report_text(t)` в их test_of_models.py): «Описание: …\nЗаключение: …».
+(`report_text(t)` в их test_of_models.py): «Описание: …». Заключение рентгенолога не берём.
 """
 
 from __future__ import annotations
@@ -55,30 +55,22 @@ def _split(line: str) -> tuple[str, str] | None:
     return (name, value) if name and value else None
 
 
-def parse_sr(text: str) -> tuple[list[SRField], str | None]:
-    """Текст протокола → (поля «Описание», заключение).
+def parse_sr(text: str) -> list[SRField]:
+    """Текст протокола → поля описания («Поле- значение»).
 
     Вставляют его из PACS или с сайта заказчика как есть, поэтому разбор терпимый:
-    маркеры списков и заголовок «Описание» пропускаются; всё после «Заключение:» — заключение
-    рентгенолога; строка без разделителя — продолжение предыдущего значения (перенос строки).
-    Значения не меняются: модель должна видеть цифры и формулировки рентгенолога дословно.
+    маркеры списков и заголовок «Описание» пропускаются; строка без разделителя — продолжение
+    предыдущего значения (перенос строки). Заключение рентгенолога в систему не берём (решение
+    v2.15): всё начиная со строки «Заключение» отбрасывается. Значения не меняются — модель
+    видит цифры и формулировки рентгенолога дословно.
     """
     fields: list[SRField] = []
-    conclusion: list[str] = []
-    in_conclusion = False
     for raw in text.splitlines():
         line = _BULLET.sub("", raw.strip())
         if not line or line.rstrip(":").lower() == "описание":
             continue
-        m = _CONCLUSION.match(line)
-        if m:
-            in_conclusion = True
-            if m.group(1):
-                conclusion.append(m.group(1))
-            continue
-        if in_conclusion:
-            conclusion.append(line)
-            continue
+        if _CONCLUSION.match(line):
+            break
         pair = _split(line)
         if pair:
             fields.append(SRField(*pair))
@@ -87,15 +79,11 @@ def parse_sr(text: str) -> tuple[list[SRField], str | None]:
             fields[-1] = SRField(last.name, f"{last.value} {line}")
         else:
             fields.append(SRField("Описание", line))
-    return fields, " ".join(conclusion).strip() or None
+    return fields
 
 
-def report_text(fields: tuple[SRField, ...] | list[SRField], conclusion: str | None) -> str:
-    """Протокол для AI — как report_text(t) у AI-команды."""
-    parts = []
-    if fields:
-        items = [f"{f.name}: {f.value.rstrip('.;')}." for f in fields]
-        parts.append("Описание: " + " ".join(items))
-    if conclusion:
-        parts.append(f"Заключение: {conclusion}")
-    return "\n".join(parts)
+def report_text(fields: tuple[SRField, ...] | list[SRField]) -> str:
+    """Протокол для AI — как report_text(t) у AI-команды: «Описание: Поле: значение. …»."""
+    if not fields:
+        return ""
+    return "Описание: " + " ".join(f"{f.name}: {f.value.rstrip('.;')}." for f in fields)

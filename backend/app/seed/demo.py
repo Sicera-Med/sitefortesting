@@ -2,8 +2,9 @@
 одинаковая картина при каждом старте, даты «свежие» относительно момента запуска.
 
 Сюжеты: Кузнецова получила уведомление, но ещё не записалась — её путь показываем вживую;
-Иванов записан по одному направлению из двух; Соколову уже ушло напоминание; часть кейсов
-закрыта. История доставок — всегда имитация: при старте ничего не отправляется.
+Иванов записан по одному направлению из двух; Соколов не записался 9 дней — ему придёт
+напоминание; часть кейсов закрыта. Истории отправок у демо-уведомлений нет — при старте
+ничего не отправляется.
 """
 
 from __future__ import annotations
@@ -25,18 +26,15 @@ from app.domain.models import (
     Appointment,
     AuditEvent,
     Decision,
-    Delivery,
     Notification,
     Patient,
     Study,
     User,
 )
 from app.domain.rules import (
-    MAX_REMINDERS,
     REMINDER_INTERVAL,
     all_covered,
     contact_channels,
-    needs_booking,
     needs_reminder,
 )
 from app.domain.sr import parse_sr
@@ -44,13 +42,12 @@ from app.seed.data import (
     DEMO_PASSWORD,
     EXTRA_APPOINTMENTS,
     PATIENTS,
-    SOCIAL,
     STAFF,
     STUDIES,
     NotificationSpec,
     StudySpec,
 )
-from app.services.notifications import delivery_targets, patient_texts, reminder_for
+from app.services.notifications import patient_texts
 from app.store import Store
 
 
@@ -129,7 +126,6 @@ class _Seeder:
                     sex=sex,
                     phone=self.contact_phone or phone,
                     contact_email=self.contact_email,
-                    socials=SOCIAL.get(key, ()),
                 )
             )
         for spec in STUDIES:
@@ -161,8 +157,7 @@ class _Seeder:
                 status=spec.status,
                 performed_at=performed_at,
                 created_at=created_at,
-                sr_fields=tuple(parse_sr(spec.sr)[0]),
-                conclusion=spec.conclusion,
+                sr_fields=tuple(parse_sr(spec.sr)),
             )
         )
         self.audit(doctor, "study.created", study.id, created_at)
@@ -264,46 +259,12 @@ class _Seeder:
         completed = study.status is StudyStatus.COMPLETED
         assert completed == all_covered(decision, appointments), spec.patient
 
-        # История отправок: первое уведомление и напоминания раз в неделю, пока пациент
-        # не записался (как делает services/reminders.py)
-        targets = delivery_targets(self.store, patient)
-        sent_at = notification.sent_at
-        notification.deliveries = [
-            Delivery(sent_at, c, target, 0, short.for_channel(c)) for c, target in targets
-        ]
-        if not needs_booking(decision):
-            return
-        due = sent_at + REMINDER_INTERVAL
-        while (
-            needs_reminder(notification, decision, appointments)
-            and notification.reminders_sent < MAX_REMINDERS
-            and due <= self.now
-        ):
-            notification.reminders_sent += 1
-            notification.deliveries += [
-                Delivery(
-                    due,
-                    c,
-                    target,
-                    notification.reminders_sent,
-                    reminder_for(self.store, notification).for_channel(c),
-                )
-                for c, target in targets
-            ]
-            self.audit(
-                None,
-                "notification.reminder",
-                study.id,
-                due,
-                notification_id=notification.id,
-                attempt=notification.reminders_sent,
-                of=MAX_REMINDERS,
-            )
-            due += REMINDER_INTERVAL
+        # Истории отправок у демо-уведомлений нет: её пишут только настоящие отправки
+        # (deliver → outbox). Первое напоминание — через неделю после уведомления, но не раньше
+        # чем через неделю от запуска: иначе при старте ушли бы настоящие SMS и письма.
         if needs_reminder(notification, decision, appointments):
-            notification.next_reminder_at = (
-                due if notification.reminders_sent < MAX_REMINDERS else None
-            )
+            due = notification.sent_at + REMINDER_INTERVAL
+            notification.next_reminder_at = max(due, self.now + REMINDER_INTERVAL)
 
 
 def seed_demo(
@@ -316,7 +277,7 @@ def seed_demo(
 ) -> None:
     """contact_phone / contact_email — общие контакты всех пациентов (DEMO_CONTACT_* в .env).
 
-    История доставок seed — всегда имитация: при старте ничего не отправляется."""
+    Истории отправок у демо-уведомлений нет: при старте ничего не отправляется."""
     now = now or datetime.now(UTC)
     # rounds=4: демо-пароль, а быстрый старт важнее стойкости хеша (bcrypt по умолчанию ~0.25 с)
     password_hash = hash_password(DEMO_PASSWORD, rounds=4)

@@ -1,5 +1,6 @@
 """Сценарий врача: вход → очередь → карточка (AI — автоматически) → решение."""
 
+from app.domain.sr import SRField
 from tests.conftest import analyze_all, login
 
 API = "/api/v1"
@@ -51,11 +52,14 @@ def test_doctor_queue_is_mine_by_default(client, petrov):
     assert all(i["can_act"] for i in items if i["status"] != "completed")
 
 
-def test_doctor_scope_all_is_read_only_for_others(client, petrov):
+def test_doctor_sees_only_own_patients(client, petrov, sidorova):
+    # Даже со scope=all врач получает только свои исследования
     items = client.get(f"{API}/studies", params={"scope": "all"}, headers=petrov).json()
-    assert len(items) == 16
-    others = [i for i in items if not i["doctor"]["full_name"].startswith("Петров")]
-    assert others and not any(i["can_act"] for i in others)
+    assert items and all(i["doctor"]["full_name"].startswith("Петров") for i in items)
+    foreign = client.get(f"{API}/studies", headers=sidorova).json()[0]["id"]
+    for path in ("", "/audit", "/history"):
+        r = client.get(f"{API}/studies/{foreign}{path}", headers=petrov)
+        assert r.status_code == 403, path
 
 
 def test_chief_and_manager_see_all(client, chief, manager):
@@ -205,21 +209,18 @@ def test_manager_cannot_decide(client, manager):
     assert r.status_code == 403
 
 
-def test_chief_decides_for_any_patient(client, chief, manager):
+def test_chief_views_but_does_not_decide(client, chief):
     study = _study(client, chief, status="new", scope="all")
-    assert study["can_act"]
+    assert not study["can_act"]
+    sid = study["id"]
+    assert client.get(f"{API}/studies/{sid}", headers=chief).status_code == 200
     r = client.post(
-        f"{API}/studies/{study['id']}/decision",
+        f"{API}/studies/{sid}/decision",
         headers=chief,
         json={"chosen_types": ["repeat_appointment"]},
     )
-    assert r.status_code == 200
-    card = client.get(f"{API}/studies/{study['id']}", headers=chief).json()
-    assert card["status"] == "notified"
-    # Решение засчитано главврачу, лечащий врач не меняется
-    assert card["doctor"]["id"] == study["doctor"]["id"]
-    d = client.get(f"{API}/metrics/dashboard", headers=manager).json()
-    assert any(row["full_name"].startswith("Смирнова") for row in d["by_doctor"])
+    assert r.status_code == 403
+    assert client.post(f"{API}/studies/{sid}/analyze", headers=chief).status_code == 403
 
 
 def _failing_study(client, headers):
@@ -227,8 +228,15 @@ def _failing_study(client, headers):
     store = client.app.state.store
     sid = _study(client, headers, status="new")["id"]
     study = store.get_study(sid)
-    study.conclusion = (study.conclusion or "") + " [[ai_fail]]"
+    _set_fail(study, True)
     return sid, study
+
+
+def _set_fail(study, on: bool) -> None:
+    """Маркер сбоя — в последнем поле протокола (он уходит в AI в report_text)."""
+    *head, last = study.sr_fields
+    value = last.value.replace(" [[ai_fail]]", "") + (" [[ai_fail]]" if on else "")
+    study.sr_fields = (*head, SRField(last.name, value))
 
 
 def _make_due(study):
@@ -254,7 +262,7 @@ def test_ai_failure_then_automatic_retry(client, petrov):
     assert sid not in client.app.state.analyzer._due()
 
     # Сервис «поднялся» — в срок воркер повторит анализ сам
-    study.conclusion = study.conclusion.replace(" [[ai_fail]]", "")
+    _set_fail(study, False)
     _make_due(study)
     analyze_all(client)
     card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
@@ -300,8 +308,8 @@ def test_manual_retry(client, petrov, sidorova, chief):
     assert last["action"] == "ai.failed" and last["actor_name"].startswith("Петров")
     assert study.ai_auto_failures == 1  # ручная попытка автосчётчик не трогает
 
-    study.conclusion = study.conclusion.replace(" [[ai_fail]]", "")
-    r = client.post(f"{API}/studies/{sid}/analyze", headers=chief)  # главврач тоже может
+    _set_fail(study, False)
+    r = client.post(f"{API}/studies/{sid}/analyze", headers=petrov)
     assert r.status_code == 200, r.text
     card = client.get(f"{API}/studies/{sid}", headers=petrov).json()
     assert card["status"] == "ai_ready" and card["ai"]["id"] == r.json()["id"]
@@ -411,5 +419,5 @@ def test_manual_send_cooldown(client, petrov, monkeypatch):
 
     store = client.app.state.store
     store.ai_last_sent[sid] -= timedelta(seconds=11)
-    study.conclusion = study.conclusion.replace(" [[ai_fail]]", "")
+    _set_fail(study, False)
     assert client.post(f"{API}/studies/{sid}/analyze", headers=petrov).status_code == 200

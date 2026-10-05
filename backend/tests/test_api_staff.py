@@ -72,7 +72,8 @@ def test_reassign_treating_doctor(client, chief, petrov, sidorova):
     # Теперь решает Сидорова, а не Петров
     card = client.get(f"{API}/studies/{study['id']}", headers=sidorova).json()
     assert card["can_act"]
-    assert not client.get(f"{API}/studies/{study['id']}", headers=petrov).json()["can_act"]
+    # Пациент больше не Петрова — его карточка ему недоступна
+    assert client.get(f"{API}/studies/{study['id']}", headers=petrov).status_code == 403
     actions = [
         e["action"] for e in client.get(f"{API}/studies/{study['id']}/audit", headers=chief).json()
     ]

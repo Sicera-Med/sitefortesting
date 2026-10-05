@@ -73,8 +73,8 @@ function StudiesQueue() {
   const params = useSearchParams();
   const patientParam = params.get("patient") ?? "";
   const [view, setView] = useState<View>(patientParam ? "all" : "work");
-  // Пациент из календаря — его исследования у всех врачей, не только у текущего
-  const [scope, setScope] = useState<"mine" | "all">(isDoctor && !patientParam ? "mine" : "all");
+  // Врач видит только своих пациентов; главврач и менеджер — всех (колонка «Лечащий врач»)
+  const scope = isDoctor ? "mine" : "all";
   const [filter, setFilter] = useState<ArchiveFilter>("all");
   const status =
     view === "all" ? undefined : view === "work" ? WORK : filter === "all" ? ARCHIVE : [filter];
@@ -103,7 +103,7 @@ function StudiesQueue() {
               ? "Архив"
               : view === "all"
                 ? "Все исследования"
-                : isDoctor && scope === "mine"
+                : isDoctor
                   ? "Мои исследования"
                   : "Все исследования"}
           </h1>
@@ -112,14 +112,6 @@ function StudiesQueue() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {isDoctor && (
-            <Tabs value={scope} onValueChange={(v) => setScope(v as "mine" | "all")}>
-              <TabsList>
-                <TabsTrigger value="mine">Мои</TabsTrigger>
-                <TabsTrigger value="all">Все</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          )}
           <Tabs value={view} onValueChange={(v) => setView(v as View)}>
             <TabsList>
               <TabsTrigger value="work">В работе</TabsTrigger>

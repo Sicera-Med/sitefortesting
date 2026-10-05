@@ -11,8 +11,9 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AI-триаж заключений",
-  description: "Демо: рекомендации AI по тексту медицинского заключения",
+  title: "Третье мнение — AI-триаж заключений",
+  description:
+    "Рекомендации AI по протоколам лучевых исследований: маршрут пациента со ссылками на клинические рекомендации",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

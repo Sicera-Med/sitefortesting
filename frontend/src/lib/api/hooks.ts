@@ -229,7 +229,7 @@ export function useUpdateDoctor() {
 
 // --- Пациент ---
 
-/** B2C: объяснение заключения простым языком — запрашивается при открытии карточки. */
+/** B2C: объяснение результата исследования простым языком — запрашивается при открытии карточки. */
 export function useExplain() {
   const qc = useQueryClient();
   return useMutation({

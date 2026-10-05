@@ -52,7 +52,6 @@ class AIService:
             study_type=study.study_type,
             body_region=study.body_region,
             description=description or None,
-            conclusion=study.conclusion,
         )
 
     async def explain(self, request: ExplainRequest) -> dict[str, Any]:
