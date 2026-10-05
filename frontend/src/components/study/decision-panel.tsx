@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Check, ClipboardCheck, Loader2, ShieldCheck, Siren, X } from "lucide-react";
+import { Bot, Check, ClipboardCheck, Loader2, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
 
 import { SourceLinks } from "@/components/study/source-links";
@@ -141,7 +141,7 @@ function DecisionForm({ study }: { study: StudyCard }) {
               <span className="h-px flex-1 bg-border" />
             </div>
             <OutcomeRow
-              tone="urgent"
+              tone="plain"
               checked={has("urgent_hospitalization")}
               onChange={() => setTypes((cur) => pick(cur, "urgent_hospitalization"))}
               title="Экстренная госпитализация"
@@ -257,7 +257,7 @@ function keysOf(items: Map<string, unknown>, type: string): string[] {
   return [...items.keys()].filter((k) => k.startsWith(`${type}:`)).map((k) => k.split(":")[1]);
 }
 
-/** Исход без записи: экстренная госпитализация (красный) или «патологии не выявлено» (зелёный). */
+/** Исход без записи: экстренная госпитализация (обычная строка) или «патологии не выявлено» (зелёный). */
 function OutcomeRow({
   tone,
   checked,
@@ -266,32 +266,31 @@ function OutcomeRow({
   hint,
   ai,
 }: {
-  tone: "urgent" | "ok";
+  tone: "plain" | "ok";
   checked: boolean;
   onChange: () => void;
   title: string;
   hint: string;
   ai: boolean;
 }) {
-  const Icon = tone === "urgent" ? Siren : ShieldCheck;
-  const urgent = tone === "urgent";
+  const plain = tone === "plain";
   return (
     <label
       className={cn(
-        "flex cursor-pointer items-center gap-3 rounded-xl border-2 p-3 text-sm transition-colors",
-        urgent
-          ? "border-red-300 bg-red-50 text-red-900 hover:border-red-500"
-          : "border-emerald-300 bg-emerald-50 text-emerald-900 hover:border-emerald-500",
-        checked && (urgent ? "border-red-600 bg-red-100" : "border-emerald-600 bg-emerald-100"),
+        "flex cursor-pointer items-center gap-3 rounded-xl p-3 text-sm transition-colors",
+        plain
+          ? "border bg-background hover:border-primary/40"
+          : "border-2 border-emerald-300 bg-emerald-50 text-emerald-900 hover:border-emerald-500",
+        checked && (plain ? "border-primary bg-primary/5" : "border-emerald-600 bg-emerald-100"),
       )}
     >
       <input
         type="checkbox"
-        className={cn("size-4", urgent ? "accent-red-600" : "accent-emerald-600")}
+        className={cn("size-4", plain ? "accent-primary" : "accent-emerald-600")}
         checked={checked}
         onChange={onChange}
       />
-      <Icon className="size-5 shrink-0" />
+      {!plain && <ShieldCheck className="size-5 shrink-0" />}
       <span className="flex-1">
         <span className="font-medium">{title}</span>
         <span className="block text-xs opacity-80">{hint}</span>
