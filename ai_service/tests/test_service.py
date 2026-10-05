@@ -199,3 +199,46 @@ def test_study_type_mapping_and_urls():
     assert set(main.SOURCE_URLS) == set(main.SOURCES)
     pdf = main.source_url({"file": main.SOURCES["lungrads"]["file"], "pages": "9–10, 15"})
     assert pdf.endswith(".pdf#page=9")
+
+
+def test_rotates_hf_tokens(monkeypatch):
+    """Кончились кредиты (402) у первого токена — сервис берёт следующий и запоминает его."""
+
+    class Resp:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+    class HfError(Exception):
+        def __init__(self, status_code):
+            super().__init__(f"HTTP {status_code}")
+            self.response = Resp(status_code)
+
+    used = []
+
+    class FakeClient:
+        def __init__(self, token):
+            self.token = token
+
+        def chat_completion(self, **kw):
+            used.append(self.token)
+            if self.token == "hf_broke":
+                raise HfError(402)
+            if self.token == "hf_limit":
+                raise HfError(429)
+            message = type("M", (), {"content": "ok"})()
+            return type("R", (), {"choices": [type("C", (), {"message": message})()]})()
+
+    monkeypatch.setattr(main, "InferenceClient", FakeClient)
+    monkeypatch.setattr(main, "_active_token", 0)
+    monkeypatch.setattr(main, "settings", lambda: ("hf_broke, hf_limit,hf_good", "m"))
+    assert main.ask([]) == "ok"
+    assert used == ["hf_broke", "hf_limit", "hf_good"]
+    used.clear()
+    assert main.ask([]) == "ok" and used == ["hf_good"]  # начинаем с рабочего
+
+    # Все токены не работают — ошибка последнего наверх (backend покажет «AI не отвечает»)
+    monkeypatch.setattr(main, "settings", lambda: ("hf_broke hf_limit", "m"))
+    monkeypatch.setattr(main, "_active_token", 0)
+    with pytest.raises(HfError):
+        main.ask([])
+    assert main.hf_tokens(" hf_a,\nhf_b ; hf_c ") == ["hf_a", "hf_b", "hf_c"]

@@ -56,7 +56,9 @@ HF_TOKEN = ""
 
 
 def settings() -> tuple[str, str]:
-    """(HF_TOKEN, MODEL); MODEL в .env — одна модель или несколько через запятую, берём первую."""
+    """(HF_TOKEN, MODEL); MODEL в .env — одна модель или несколько через запятую, берём первую.
+
+    HF_TOKEN — один токен или несколько через запятую: см. hf_tokens() и ask()."""
     if HF_TOKEN and MODEL:
         return HF_TOKEN, MODEL
     for path in ENV_PATHS:
@@ -142,17 +144,45 @@ def short_error(exc: Exception) -> str:
     return f"{exc.__class__.__name__}: {str(exc).splitlines()[0][:200]}"
 
 
+def hf_tokens(raw: str) -> list[str]:
+    """«hf_a, hf_b» → [hf_a, hf_b]: запасные токены через запятую (или пробел / перенос строки)."""
+    return [t for t in re.split(r"[\s,;]+", raw) if t]
+
+
+# Ответы HF, при которых пробуем следующий токен: неверный токен, кончились кредиты, лимит
+ROTATE_ON = {401, 402, 403, 429}
+_active_token = 0  # индекс токена, который сработал последним — с него и начинаем
+
+
 def ask(messages: list[dict[str, str]]) -> str:
-    """Как _call() в их test_of_models.py: те же параметры генерации."""
-    token, model = settings()
-    client = InferenceClient(token=token)
-    resp = client.chat_completion(
-        model=model,
-        messages=messages,
-        max_tokens=4096,  # рассуждающим MoE-моделям нужен запас
-        temperature=0.2,
-    )
-    return resp.choices[0].message.content or ""  # при нехватке токенов content бывает None
+    """Как _call() в их test_of_models.py: те же параметры генерации.
+
+    Токены перебираются по кругу, начиная с последнего рабочего: если HF ответил 401/402/403/429,
+    берём следующий. Другие ошибки (сеть, модель) не зависят от токена — сразу наверх.
+    """
+    global _active_token
+    raw, model = settings()
+    tokens = hf_tokens(raw)
+    start = _active_token % len(tokens) if tokens else 0
+    last_exc: Exception | None = None
+    for i in [*range(start, len(tokens)), *range(start)]:
+        try:
+            resp = InferenceClient(token=tokens[i]).chat_completion(
+                model=model,
+                messages=messages,
+                max_tokens=4096,  # рассуждающим MoE-моделям нужен запас
+                temperature=0.2,
+            )
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status not in ROTATE_ON:
+                raise
+            logger.warning("HF token #%d of %d: %s — пробуем следующий", i + 1, len(tokens), status)
+            last_exc = exc
+            continue
+        _active_token = i
+        return resp.choices[0].message.content or ""  # при нехватке токенов content бывает None
+    raise last_exc or RuntimeError("HF_TOKEN не задан")
 
 
 def _model_call(messages: list[dict[str, str]], request_id: str) -> str:
@@ -204,7 +234,12 @@ app = FastAPI(title="Triage AI service", version="0.2.0")
 @app.get("/health")
 def health() -> dict[str, Any]:
     token, model = settings()
-    return {"status": "ok", "model": model or None, "hf_token": bool(token)}
+    return {
+        "status": "ok",
+        "model": model or None,
+        "hf_token": bool(token),
+        "hf_tokens": len(hf_tokens(token)),
+    }
 
 
 @app.post("/ai/v1/analyze")
