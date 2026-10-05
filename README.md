@@ -118,6 +118,7 @@ docker compose up --build
 - С телефона в той же Wi-Fi-сети — `http://<IP-компьютера>:3000`
 - Документация API (Swagger) — http://localhost:8000/docs
 - Остановить — `Ctrl+C`, после смены настроек — снова `docker compose up --build`
+- Ошибка `failed to bind host port … address already in use` — порт 3000 или 8000 занят другой программой. Остановите её (узнать, какую: `sudo ss -ltnp | grep -E ':(3000|8000)'`) или поменяйте левое число в `ports` в `docker-compose.yml`, например `"8080:8000"`
 
 #### Необязательно: настоящие SMS и email
 
